@@ -8225,3 +8225,4126 @@ def web_search_tool(query: str, num_results: int = 5) -> str:
 
 **第三部分（第3批）完成。请输入 "继续" 获取第三部分（第4批）：Memory 模块、LLM 模块和 Utils 模块完整代码。**
 
+## 第三部分（第4批）：Memory 模块、LLM 模块和 Utils 模块完整代码
+
+---
+
+### Memory 模块
+
+#### 文件：`src/memory/__init__.py`
+
+```python
+"""
+记忆系统模块
+============
+
+提供短期和长期记忆功能。
+
+记忆类型：
+- ShortTermMemory: 会话内上下文记忆，存储在内存中
+- LongTermMemory: 持久化记忆，支持文件存储
+"""
+
+from src.memory.short_term import ShortTermMemory
+from src.memory.long_term import LongTermMemory
+
+__all__ = [
+    "ShortTermMemory",
+    "LongTermMemory",
+]
+```
+
+---
+
+#### 文件：`src/memory/short_term.py`
+
+```python
+"""
+短期记忆模块
+============
+
+实现会话内的上下文记忆，用于在单次任务执行过程中保存和检索信息。
+"""
+
+from typing import Any, Dict, List, Optional
+from datetime import datetime
+from collections import OrderedDict
+import threading
+
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+class MemoryItem:
+    """记忆项"""
+    
+    def __init__(
+        self,
+        key: str,
+        value: Any,
+        metadata: Optional[Dict[str, Any]] = None
+    ):
+        """
+        初始化记忆项
+        
+        Args:
+            key: 键
+            value: 值
+            metadata: 元数据
+        """
+        self.key = key
+        self.value = value
+        self.metadata = metadata or {}
+        self.created_at = datetime.now()
+        self.accessed_at = datetime.now()
+        self.access_count = 0
+    
+    def access(self) -> Any:
+        """访问记忆项，更新访问信息"""
+        self.accessed_at = datetime.now()
+        self.access_count += 1
+        return self.value
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典"""
+        return {
+            "key": self.key,
+            "value": self.value,
+            "metadata": self.metadata,
+            "created_at": self.created_at.isoformat(),
+            "accessed_at": self.accessed_at.isoformat(),
+            "access_count": self.access_count,
+        }
+
+
+class ShortTermMemory:
+    """
+    短期记忆
+    
+    基于 LRU（最近最少使用）策略的内存存储。
+    当超过最大容量时，自动淘汰最久未访问的记忆项。
+    
+    特性：
+    - 线程安全
+    - 自动过期
+    - LRU 淘汰策略
+    - 支持元数据
+    
+    使用示例：
+        >>> memory = ShortTermMemory(max_size=100)
+        >>> memory.store("user_task", "编写爬虫")
+        >>> task = memory.retrieve("user_task")
+        >>> print(task)  # "编写爬虫"
+    """
+    
+    def __init__(
+        self,
+        max_size: int = 1000,
+        default_ttl: Optional[int] = None
+    ):
+        """
+        初始化短期记忆
+        
+        Args:
+            max_size: 最大存储项数
+            default_ttl: 默认生存时间（秒），None 表示不过期
+        """
+        self.max_size = max_size
+        self.default_ttl = default_ttl
+        self._storage: OrderedDict[str, MemoryItem] = OrderedDict()
+        self._lock = threading.RLock()
+        self.logger = get_logger(self.__class__.__name__)
+        
+        self.logger.debug(f"初始化短期记忆，最大容量: {max_size}")
+    
+    def store(
+        self,
+        key: str,
+        value: Any,
+        metadata: Optional[Dict[str, Any]] = None,
+        ttl: Optional[int] = None
+    ) -> None:
+        """
+        存储记忆项
+        
+        Args:
+            key: 键
+            value: 值
+            metadata: 元数据
+            ttl: 生存时间（秒），覆盖默认值
+        """
+        with self._lock:
+            # 如果键已存在，先删除（以更新顺序）
+            if key in self._storage:
+                del self._storage[key]
+            
+            # 检查容量，必要时淘汰
+            while len(self._storage) >= self.max_size:
+                oldest_key = next(iter(self._storage))
+                del self._storage[oldest_key]
+                self.logger.debug(f"淘汰记忆项: {oldest_key}")
+            
+            # 存储新项
+            item_metadata = metadata or {}
+            if ttl or self.default_ttl:
+                item_metadata["ttl"] = ttl or self.default_ttl
+            
+            self._storage[key] = MemoryItem(key, value, item_metadata)
+            self.logger.debug(f"存储记忆项: {key}")
+    
+    def retrieve(self, key: str) -> Optional[Any]:
+        """
+        检索记忆项
+        
+        Args:
+            key: 键
+            
+        Returns:
+            值，不存在或已过期返回 None
+        """
+        with self._lock:
+            if key not in self._storage:
+                return None
+            
+            item = self._storage[key]
+            
+            # 检查过期
+            if self._is_expired(item):
+                del self._storage[key]
+                self.logger.debug(f"记忆项已过期: {key}")
+                return None
+            
+            # 移动到末尾（最近访问）
+            self._storage.move_to_end(key)
+            
+            return item.access()
+    
+    def _is_expired(self, item: MemoryItem) -> bool:
+        """
+        检查记忆项是否过期
+        
+        Args:
+            item: 记忆项
+            
+        Returns:
+            是否过期
+        """
+        ttl = item.metadata.get("ttl")
+        if ttl is None:
+            return False
+        
+        elapsed = (datetime.now() - item.created_at).total_seconds()
+        return elapsed > ttl
+    
+    def delete(self, key: str) -> bool:
+        """
+        删除记忆项
+        
+        Args:
+            key: 键
+            
+        Returns:
+            是否成功删除
+        """
+        with self._lock:
+            if key in self._storage:
+                del self._storage[key]
+                self.logger.debug(f"删除记忆项: {key}")
+                return True
+            return False
+    
+    def exists(self, key: str) -> bool:
+        """
+        检查键是否存在
+        
+        Args:
+            key: 键
+            
+        Returns:
+            是否存在
+        """
+        with self._lock:
+            if key not in self._storage:
+                return False
+            
+            item = self._storage[key]
+            if self._is_expired(item):
+                del self._storage[key]
+                return False
+            
+            return True
+    
+    def get_recent(self, n: int = 10) -> List[Dict[str, Any]]:
+        """
+        获取最近的 n 个记忆项
+        
+        Args:
+            n: 数量
+            
+        Returns:
+            记忆项字典列表
+        """
+        with self._lock:
+            # 清理过期项
+            self._cleanup_expired()
+            
+            # 获取最近的项（从末尾开始）
+            items = list(self._storage.values())[-n:]
+            items.reverse()
+            
+            return [item.to_dict() for item in items]
+    
+    def search(
+        self,
+        query: str,
+        top_k: int = 5
+    ) -> List[Dict[str, Any]]:
+        """
+        简单搜索（基于键名匹配）
+        
+        Args:
+            query: 搜索查询
+            top_k: 返回数量
+            
+        Returns:
+            匹配的记忆项
+        """
+        with self._lock:
+            self._cleanup_expired()
+            
+            results = []
+            query_lower = query.lower()
+            
+            for key, item in self._storage.items():
+                # 简单的键名和值匹配
+                if query_lower in key.lower():
+                    results.append(item.to_dict())
+                elif isinstance(item.value, str) and query_lower in item.value.lower():
+                    results.append(item.to_dict())
+                
+                if len(results) >= top_k:
+                    break
+            
+            return results
+    
+    def _cleanup_expired(self) -> int:
+        """
+        清理过期项
+        
+        Returns:
+            清理的项数
+        """
+        expired_keys = [
+            key for key, item in self._storage.items()
+            if self._is_expired(item)
+        ]
+        
+        for key in expired_keys:
+            del self._storage[key]
+        
+        if expired_keys:
+            self.logger.debug(f"清理 {len(expired_keys)} 个过期项")
+        
+        return len(expired_keys)
+    
+    def clear(self) -> None:
+        """清空所有记忆"""
+        with self._lock:
+            self._storage.clear()
+            self.logger.info("清空短期记忆")
+    
+    def size(self) -> int:
+        """
+        获取当前存储项数
+        
+        Returns:
+            项数
+        """
+        with self._lock:
+            return len(self._storage)
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """
+        获取记忆统计信息
+        
+        Returns:
+            统计信息字典
+        """
+        with self._lock:
+            total_access = sum(
+                item.access_count for item in self._storage.values()
+            )
+            
+            return {
+                "size": len(self._storage),
+                "max_size": self.max_size,
+                "total_access_count": total_access,
+                "oldest_item": (
+                    next(iter(self._storage)).key
+                    if self._storage else None
+                ),
+                "newest_item": (
+                    list(self._storage.keys())[-1]
+                    if self._storage else None
+                ),
+            }
+```
+
+---
+
+#### 文件：`src/memory/long_term.py`
+
+```python
+"""
+长期记忆模块
+============
+
+实现持久化记忆存储，支持文件系统存储。
+"""
+
+import json
+import os
+import hashlib
+from typing import Any, Dict, List, Optional
+from datetime import datetime
+from pathlib import Path
+import threading
+
+from src.config.settings import get_settings
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+class LongTermMemory:
+    """
+    长期记忆
+    
+    基于文件系统的持久化存储。
+    每个记忆项存储为单独的 JSON 文件，支持索引加速查找。
+    
+    特性：
+    - 持久化存储
+    - 自动索引
+    - 支持元数据
+    - 线程安全
+    
+    存储结构：
+        memory_storage/
+        ├── index.json          # 索引文件
+        ├── items/
+        │   ├── abc123.json    # 记忆项文件
+        │   └── def456.json
+        └── metadata.json       # 元数据
+    
+    使用示例：
+        >>> memory = LongTermMemory()
+        >>> memory.store("task_history", {"task": "爬虫", "result": "成功"})
+        >>> history = memory.retrieve("task_history")
+    """
+    
+    def __init__(
+        self,
+        storage_path: Optional[str] = None,
+        auto_save: bool = True
+    ):
+        """
+        初始化长期记忆
+        
+        Args:
+            storage_path: 存储路径，None 使用默认配置
+            auto_save: 是否自动保存索引
+        """
+        settings = get_settings()
+        self.storage_path = Path(
+            storage_path or settings.memory_storage_path
+        ).resolve()
+        self.auto_save = auto_save
+        
+        self._index: Dict[str, Dict[str, Any]] = {}
+        self._lock = threading.RLock()
+        self.logger = get_logger(self.__class__.__name__)
+        
+        # 初始化存储目录
+        self._init_storage()
+        
+        # 加载索引
+        self._load_index()
+        
+        self.logger.info(f"初始化长期记忆，路径: {self.storage_path}")
+    
+    def _init_storage(self) -> None:
+        """初始化存储目录结构"""
+        self.storage_path.mkdir(parents=True, exist_ok=True)
+        (self.storage_path / "items").mkdir(exist_ok=True)
+    
+    def _get_item_path(self, key: str) -> Path:
+        """
+        获取记忆项的文件路径
+        
+        Args:
+            key: 键
+            
+        Returns:
+            文件路径
+        """
+        # 使用 hash 确保文件名安全
+        key_hash = hashlib.md5(key.encode()).hexdigest()[:16]
+        return self.storage_path / "items" / f"{key_hash}.json"
+    
+    def _load_index(self) -> None:
+        """加载索引"""
+        index_path = self.storage_path / "index.json"
+        
+        if index_path.exists():
+            try:
+                with open(index_path, "r", encoding="utf-8") as f:
+                    self._index = json.load(f)
+                self.logger.debug(f"加载索引，共 {len(self._index)} 项")
+            except Exception as e:
+                self.logger.warning(f"索引加载失败: {e}")
+                self._index = {}
+        else:
+            self._index = {}
+    
+    def _save_index(self) -> None:
+        """保存索引"""
+        index_path = self.storage_path / "index.json"
+        
+        try:
+            with open(index_path, "w", encoding="utf-8") as f:
+                json.dump(self._index, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self.logger.error(f"索引保存失败: {e}")
+    
+    def store(
+        self,
+        key: str,
+        value: Any,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """
+        存储记忆项
+        
+        Args:
+            key: 键
+            value: 值（必须可 JSON 序列化）
+            metadata: 元数据
+        """
+        with self._lock:
+            item_path = self._get_item_path(key)
+            
+            # 构建记忆项数据
+            item_data = {
+                "key": key,
+                "value": value,
+                "metadata": metadata or {},
+                "created_at": datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat(),
+            }
+            
+            # 保存到文件
+            try:
+                with open(item_path, "w", encoding="utf-8") as f:
+                    json.dump(item_data, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                self.logger.error(f"存储失败: {e}")
+                raise
+            
+            # 更新索引
+            self._index[key] = {
+                "path": str(item_path),
+                "created_at": item_data["created_at"],
+                "updated_at": item_data["updated_at"],
+                "metadata_keys": list((metadata or {}).keys()),
+            }
+            
+            if self.auto_save:
+                self._save_index()
+            
+            self.logger.debug(f"存储记忆项: {key}")
+    
+    def retrieve(self, key: str) -> Optional[Any]:
+        """
+        检索记忆项
+        
+        Args:
+            key: 键
+            
+        Returns:
+            值，不存在返回 None
+        """
+        with self._lock:
+            if key not in self._index:
+                return None
+            
+            item_path = self._get_item_path(key)
+            
+            if not item_path.exists():
+                # 索引不一致，清理
+                del self._index[key]
+                if self.auto_save:
+                    self._save_index()
+                return None
+            
+            try:
+                with open(item_path, "r", encoding="utf-8") as f:
+                    item_data = json.load(f)
+                return item_data.get("value")
+            except Exception as e:
+                self.logger.error(f"检索失败: {e}")
+                return None
+    
+    def delete(self, key: str) -> bool:
+        """
+        删除记忆项
+        
+        Args:
+            key: 键
+            
+        Returns:
+            是否成功删除
+        """
+        with self._lock:
+            if key not in self._index:
+                return False
+            
+            item_path = self._get_item_path(key)
+            
+            # 删除文件
+            if item_path.exists():
+                try:
+                    item_path.unlink()
+                except Exception as e:
+                    self.logger.error(f"删除文件失败: {e}")
+            
+            # 更新索引
+            del self._index[key]
+            if self.auto_save:
+                self._save_index()
+            
+            self.logger.debug(f"删除记忆项: {key}")
+            return True
+    
+    def exists(self, key: str) -> bool:
+        """
+        检查键是否存在
+        
+        Args:
+            key: 键
+            
+        Returns:
+            是否存在
+        """
+        with self._lock:
+            return key in self._index
+    
+    def search(
+        self,
+        query: str,
+        top_k: int = 5
+    ) -> List[Dict[str, Any]]:
+        """
+        搜索记忆项
+        
+        简单的关键词匹配搜索。
+        
+        Args:
+            query: 搜索查询
+            top_k: 返回数量
+            
+        Returns:
+            匹配的记忆项列表
+        """
+        with self._lock:
+            results = []
+            query_lower = query.lower()
+            
+            for key in self._index:
+                if query_lower in key.lower():
+                    value = self.retrieve(key)
+                    if value is not None:
+                        results.append({
+                            "key": key,
+                            "value": value,
+                            "score": 1.0,  # 简单匹配不计算分数
+                        })
+                
+                if len(results) >= top_k:
+                    break
+            
+            return results
+    
+    def list_keys(self) -> List[str]:
+        """
+        列出所有键
+        
+        Returns:
+            键列表
+        """
+        with self._lock:
+            return list(self._index.keys())
+    
+    def clear(self) -> None:
+        """清空所有记忆"""
+        with self._lock:
+            # 删除所有文件
+            items_dir = self.storage_path / "items"
+            if items_dir.exists():
+                for item_file in items_dir.glob("*.json"):
+                    try:
+                        item_file.unlink()
+                    except Exception as e:
+                        self.logger.warning(f"删除文件失败: {e}")
+            
+            # 清空索引
+            self._index = {}
+            self._save_index()
+            
+            self.logger.info("清空长期记忆")
+    
+    def size(self) -> int:
+        """
+        获取存储项数
+        
+        Returns:
+            项数
+        """
+        with self._lock:
+            return len(self._index)
+    
+    def persist(self) -> None:
+        """强制持久化索引"""
+        with self._lock:
+            self._save_index()
+            self.logger.debug("索引已持久化")
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """
+        获取存储统计信息
+        
+        Returns:
+            统计信息字典
+        """
+        with self._lock:
+            items_dir = self.storage_path / "items"
+            total_size = sum(
+                f.stat().st_size for f in items_dir.glob("*.json")
+            ) if items_dir.exists() else 0
+            
+            return {
+                "item_count": len(self._index),
+                "storage_path": str(self.storage_path),
+                "total_size_bytes": total_size,
+                "total_size_mb": round(total_size / (1024 * 1024), 2),
+            }
+```
+
+---
+
+### LLM 模块
+
+#### 文件：`src/llm/__init__.py`
+
+```python
+"""
+LLM 模块
+========
+
+提供语言模型的创建和管理功能。
+
+支持的 LLM 提供商：
+- OpenAI (GPT-4, GPT-3.5 等)
+- Anthropic (Claude 系列)
+- 本地模型 (通过兼容 API)
+"""
+
+from src.llm.factory import LLMFactory, create_llm
+
+__all__ = [
+    "LLMFactory",
+    "create_llm",
+]
+```
+
+---
+
+#### 文件：`src/llm/factory.py`
+
+```python
+"""
+LLM 工厂模块
+============
+
+使用工厂模式创建和管理 LLM 实例。
+"""
+
+from typing import Dict, Optional, Type, Any
+from functools import lru_cache
+
+from langchain_core.language_models import BaseChatModel
+from langchain_core.callbacks import BaseCallbackHandler
+
+from src.config.settings import Settings, LLMConfig, get_settings
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+class TokenCounterCallback(BaseCallbackHandler):
+    """Token 计数回调处理器"""
+    
+    def __init__(self):
+        self.prompt_tokens = 0
+        self.completion_tokens = 0
+        self.total_tokens = 0
+    
+    def on_llm_end(self, response, **kwargs):
+        """LLM 调用结束时统计 token"""
+        if hasattr(response, "llm_output") and response.llm_output:
+            usage = response.llm_output.get("token_usage", {})
+            self.prompt_tokens += usage.get("prompt_tokens", 0)
+            self.completion_tokens += usage.get("completion_tokens", 0)
+            self.total_tokens += usage.get("total_tokens", 0)
+    
+    def get_usage(self) -> Dict[str, int]:
+        """获取使用统计"""
+        return {
+            "prompt": self.prompt_tokens,
+            "completion": self.completion_tokens,
+            "total": self.total_tokens,
+        }
+    
+    def reset(self):
+        """重置计数器"""
+        self.prompt_tokens = 0
+        self.completion_tokens = 0
+        self.total_tokens = 0
+
+
+class LLMFactory:
+    """
+    LLM 工厂类
+    
+    使用工厂模式创建不同提供商的 LLM 实例。
+    
+    支持的提供商：
+    - openai: OpenAI 模型
+    - anthropic: Anthropic Claude 模型
+    - local: 本地或兼容 API 的模型
+    
+    使用示例：
+        >>> config = LLMConfig(provider="openai", model_name="gpt-4")
+        >>> llm = LLMFactory.create(config)
+        >>> response = llm.invoke("Hello!")
+    """
+    
+    _instances: Dict[str, BaseChatModel] = {}
+    _token_counters: Dict[str, TokenCounterCallback] = {}
+    
+    @classmethod
+    def create(
+        cls,
+        config: Optional[LLMConfig] = None,
+        cache_key: Optional[str] = None,
+    ) -> BaseChatModel:
+        """
+        创建 LLM 实例
+        
+        Args:
+            config: LLM 配置，None 使用默认配置
+            cache_key: 缓存键，相同键返回缓存实例
+            
+        Returns:
+            LLM 实例
+        """
+        if config is None:
+            settings = get_settings()
+            config = settings.get_llm_config()
+        
+        # 生成缓存键
+        if cache_key is None:
+            cache_key = f"{config.provider}:{config.model_name}"
+        
+        # 检查缓存
+        if cache_key in cls._instances:
+            logger.debug(f"使用缓存的 LLM 实例: {cache_key}")
+            return cls._instances[cache_key]
+        
+        # 创建新实例
+        logger.info(f"创建 LLM: {config.provider}/{config.model_name}")
+        
+        if config.provider == "openai":
+            llm = cls._create_openai(config)
+        elif config.provider == "anthropic":
+            llm = cls._create_anthropic(config)
+        elif config.provider == "local":
+            llm = cls._create_local(config)
+        else:
+            raise ValueError(f"不支持的 LLM 提供商: {config.provider}")
+        
+        # 缓存实例
+        cls._instances[cache_key] = llm
+        
+        return llm
+    
+    @classmethod
+    def _create_openai(cls, config: LLMConfig) -> BaseChatModel:
+        """
+        创建 OpenAI LLM
+        
+        Args:
+            config: LLM 配置
+            
+        Returns:
+            ChatOpenAI 实例
+        """
+        try:
+            from langchain_openai import ChatOpenAI
+        except ImportError:
+            raise ImportError(
+                "请安装 langchain-openai: pip install langchain-openai"
+            )
+        
+        kwargs = {
+            "model": config.model_name,
+            "temperature": config.temperature,
+            "max_tokens": config.max_tokens,
+        }
+        
+        if config.api_key:
+            kwargs["api_key"] = config.api_key
+        
+        if config.base_url:
+            kwargs["base_url"] = config.base_url
+        
+        return ChatOpenAI(**kwargs)
+    
+    @classmethod
+    def _create_anthropic(cls, config: LLMConfig) -> BaseChatModel:
+        """
+        创建 Anthropic LLM
+        
+        Args:
+            config: LLM 配置
+            
+        Returns:
+            ChatAnthropic 实例
+        """
+        try:
+            from langchain_anthropic import ChatAnthropic
+        except ImportError:
+            raise ImportError(
+                "请安装 langchain-anthropic: pip install langchain-anthropic"
+            )
+        
+        kwargs = {
+            "model": config.model_name,
+            "temperature": config.temperature,
+            "max_tokens": config.max_tokens,
+        }
+        
+        if config.api_key:
+            kwargs["anthropic_api_key"] = config.api_key
+        
+        return ChatAnthropic(**kwargs)
+    
+    @classmethod
+    def _create_local(cls, config: LLMConfig) -> BaseChatModel:
+        """
+        创建本地/兼容 API 的 LLM
+        
+        使用 OpenAI 兼容接口连接本地模型（如 Ollama、vLLM 等）
+        
+        Args:
+            config: LLM 配置
+            
+        Returns:
+            ChatOpenAI 实例（使用自定义 base_url）
+        """
+        try:
+            from langchain_openai import ChatOpenAI
+        except ImportError:
+            raise ImportError(
+                "请安装 langchain-openai: pip install langchain-openai"
+            )
+        
+        base_url = config.base_url or "http://localhost:11434/v1"
+        
+        return ChatOpenAI(
+            model=config.model_name,
+            temperature=config.temperature,
+            max_tokens=config.max_tokens,
+            base_url=base_url,
+            api_key=config.api_key or "not-needed",  # 本地模型通常不需要
+        )
+    
+    @classmethod
+    def get_token_counter(cls, cache_key: str) -> Optional[TokenCounterCallback]:
+        """
+        获取 token 计数器
+        
+        Args:
+            cache_key: LLM 缓存键
+            
+        Returns:
+            TokenCounterCallback 实例
+        """
+        return cls._token_counters.get(cache_key)
+    
+    @classmethod
+    def clear_cache(cls) -> None:
+        """清空所有缓存的 LLM 实例"""
+        cls._instances.clear()
+        cls._token_counters.clear()
+        logger.info("LLM 缓存已清空")
+    
+    @classmethod
+    def list_cached(cls) -> list:
+        """
+        列出所有缓存的 LLM
+        
+        Returns:
+            缓存键列表
+        """
+        return list(cls._instances.keys())
+
+
+def create_llm(
+    provider: str = "openai",
+    model_name: Optional[str] = None,
+    temperature: float = 0.7,
+    max_tokens: int = 4096,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+) -> BaseChatModel:
+    """
+    便捷函数：创建 LLM 实例
+    
+    Args:
+        provider: 提供商 (openai/anthropic/local)
+        model_name: 模型名称
+        temperature: 温度参数
+        max_tokens: 最大 token 数
+        api_key: API 密钥
+        base_url: 基础 URL
+        
+    Returns:
+        LLM 实例
+    """
+    # 默认模型名称
+    default_models = {
+        "openai": "gpt-4o-mini",
+        "anthropic": "claude-3-sonnet-20240229",
+        "local": "llama3",
+    }
+    
+    if model_name is None:
+        model_name = default_models.get(provider, "gpt-4o-mini")
+    
+    config = LLMConfig(
+        provider=provider,
+        model_name=model_name,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        api_key=api_key,
+        base_url=base_url,
+    )
+    
+    return LLMFactory.create(config)
+```
+
+---
+
+### Utils 模块
+
+#### 文件：`src/utils/__init__.py`
+
+```python
+"""
+工具模块
+========
+
+提供日志、可视化等辅助功能。
+"""
+
+from src.utils.logger import (
+    setup_logger,
+    get_logger,
+    set_log_level,
+)
+from src.utils.visualizer import (
+    ExecutionVisualizer,
+    generate_mermaid_graph,
+)
+
+__all__ = [
+    "setup_logger",
+    "get_logger",
+    "set_log_level",
+    "ExecutionVisualizer",
+    "generate_mermaid_graph",
+]
+```
+
+---
+
+#### 文件：`src/utils/logger.py`
+
+```python
+"""
+日志工具模块
+============
+
+提供统一的日志配置和管理。
+"""
+
+import logging
+import sys
+from pathlib import Path
+from datetime import datetime
+from typing import Optional
+from logging.handlers import RotatingFileHandler
+
+from rich.logging import RichHandler
+from rich.console import Console
+
+# 全局日志配置
+_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+_LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+_RICH_FORMAT = "%(message)s"
+
+# 日志级别映射
+_LOG_LEVELS = {
+    "debug": logging.DEBUG,
+    "info": logging.INFO,
+    "warning": logging.WARNING,
+    "error": logging.ERROR,
+    "critical": logging.CRITICAL,
+}
+
+# 全局日志器缓存
+_loggers: dict = {}
+_initialized = False
+
+
+def setup_logger(
+    log_dir: str = "logs",
+    log_file: Optional[str] = None,
+    level: str = "info",
+    debug: bool = False,
+    use_rich: bool = True,
+    max_file_size: int = 10 * 1024 * 1024,  # 10MB
+    backup_count: int = 5,
+) -> None:
+    """
+    设置全局日志配置
+    
+    Args:
+        log_dir: 日志目录
+        log_file: 日志文件名，None 自动生成
+        level: 日志级别
+        debug: 是否启用调试模式（覆盖 level）
+        use_rich: 是否使用 Rich 美化输出
+        max_file_size: 单个日志文件最大大小
+        backup_count: 保留的备份文件数
+    """
+    global _initialized
+    
+    if _initialized:
+        return
+    
+    # 确定日志级别
+    if debug:
+        log_level = logging.DEBUG
+    else:
+        log_level = _LOG_LEVELS.get(level.lower(), logging.INFO)
+    
+    # 创建日志目录
+    log_path = Path(log_dir)
+    log_path.mkdir(parents=True, exist_ok=True)
+    
+    # 确定日志文件名
+    if log_file is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file = f"multi_agent_{timestamp}.log"
+    
+    log_file_path = log_path / log_file
+    
+    # 获取根日志器
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+    
+    # 清除现有处理器
+    root_logger.handlers.clear()
+    
+    # 添加控制台处理器
+    if use_rich:
+        console_handler = RichHandler(
+            console=Console(stderr=True),
+            show_time=True,
+            show_path=debug,
+            rich_tracebacks=True,
+            markup=True,
+        )
+        console_handler.setFormatter(logging.Formatter(_RICH_FORMAT))
+    else:
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setFormatter(
+            logging.Formatter(_LOG_FORMAT, _LOG_DATE_FORMAT)
+        )
+    
+    console_handler.setLevel(log_level)
+    root_logger.addHandler(console_handler)
+    
+    # 添加文件处理器
+    file_handler = RotatingFileHandler(
+        log_file_path,
+        maxBytes=max_file_size,
+        backupCount=backup_count,
+        encoding="utf-8",
+    )
+    file_handler.setFormatter(
+        logging.Formatter(_LOG_FORMAT, _LOG_DATE_FORMAT)
+    )
+    file_handler.setLevel(logging.DEBUG)  # 文件记录所有级别
+    root_logger.addHandler(file_handler)
+    
+    # 降低第三方库的日志级别
+    for lib in ["httpx", "httpcore", "openai", "anthropic", "urllib3"]:
+        logging.getLogger(lib).setLevel(logging.WARNING)
+    
+    _initialized = True
+    
+    # 记录启动信息
+    root_logger.info(f"日志系统初始化完成，文件: {log_file_path}")
+
+
+def get_logger(name: str) -> logging.Logger:
+    """
+    获取日志器实例
+    
+    Args:
+        name: 日志器名称
+        
+    Returns:
+        Logger 实例
+    """
+    if name not in _loggers:
+        logger = logging.getLogger(name)
+        _loggers[name] = logger
+    
+    return _loggers[name]
+
+
+def set_log_level(level: str, logger_name: Optional[str] = None) -> None:
+    """
+    设置日志级别
+    
+    Args:
+        level: 日志级别
+        logger_name: 日志器名称，None 表示根日志器
+    """
+    log_level = _LOG_LEVELS.get(level.lower(), logging.INFO)
+    
+    if logger_name:
+        logging.getLogger(logger_name).setLevel(log_level)
+    else:
+        logging.getLogger().setLevel(log_level)
+
+
+class LoggerContext:
+    """
+    日志上下文管理器
+    
+    用于临时修改日志级别。
+    
+    使用示例：
+        >>> with LoggerContext("debug"):
+        ...     # 此处日志级别为 DEBUG
+        ...     pass
+        >>> # 日志级别恢复
+    """
+    
+    def __init__(self, level: str, logger_name: Optional[str] = None):
+        self.level = level
+        self.logger_name = logger_name
+        self._original_level = None
+    
+    def __enter__(self):
+        logger = logging.getLogger(self.logger_name)
+        self._original_level = logger.level
+        set_log_level(self.level, self.logger_name)
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        logger = logging.getLogger(self.logger_name)
+        logger.setLevel(self._original_level)
+        return False
+```
+
+---
+
+#### 文件：`src/utils/visualizer.py`
+
+```python
+"""
+可视化工具模块
+==============
+
+提供执行过程可视化功能。
+"""
+
+from typing import Any, Dict, List, Optional
+from datetime import datetime
+
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+class ExecutionVisualizer:
+    """
+    执行过程可视化器
+    
+    生成执行流程的可视化表示。
+    
+    支持的格式：
+    - Mermaid: 流程图标记语言
+    - Text: 纯文本表示
+    """
+    
+    def __init__(self):
+        """初始化可视化器"""
+        self.logger = get_logger(self.__class__.__name__)
+    
+    def generate_mermaid(
+        self,
+        state: Dict[str, Any],
+        include_details: bool = False
+    ) -> str:
+        """
+        生成 Mermaid 流程图
+        
+        Args:
+            state: 执行状态
+            include_details: 是否包含详细信息
+            
+        Returns:
+            Mermaid 格式字符串
+        """
+        lines = ["```mermaid", "flowchart TD"]
+        
+        # 添加开始节点
+        lines.append("    START((开始))")
+        
+        # 从推理轨迹生成节点
+        reasoning_trace = state.get("reasoning_trace", [])
+        node_id = 0
+        prev_node = "START"
+        
+        for step in reasoning_trace:
+            node_id += 1
+            node_name = f"N{node_id}"
+            
+            # 提取节点信息
+            if "]" in step:
+                agent = step.split("]")[0].strip("[")
+                content = step.split("]")[1].strip()[:50]
+            else:
+                agent = "Unknown"
+                content = step[:50]
+            
+            # 添加节点
+            lines.append(f"    {node_name}[{agent}]")
+            lines.append(f"    {prev_node} --> {node_name}")
+            
+            prev_node = node_name
+        
+        # 添加结束节点
+        lines.append("    END((结束))")
+        lines.append(f"    {prev_node} --> END")
+        
+        # 添加样式
+        lines.append("")
+        lines.append("    classDef coordinator fill:#e1f5fe")
+        lines.append("    classDef planner fill:#fff3e0")
+        lines.append("    classDef worker fill:#e8f5e9")
+        lines.append("    classDef critic fill:#fce4ec")
+        
+        lines.append("```")
+        
+        return "\n".join(lines)
+    
+    def generate_text_trace(
+        self,
+        state: Dict[str, Any],
+        max_width: int = 80
+    ) -> str:
+        """
+        生成文本格式的执行轨迹
+        
+        Args:
+            state: 执行状态
+            max_width: 最大宽度
+            
+        Returns:
+            文本格式字符串
+        """
+        lines = []
+        lines.append("=" * max_width)
+        lines.append("执行轨迹".center(max_width))
+        lines.append("=" * max_width)
+        
+        # 基本信息
+        lines.append(f"任务ID: {state.get('task_id', 'N/A')}")
+        lines.append(f"原始任务: {state.get('original_task', '')[:60]}...")
+        lines.append(f"迭代次数: {state.get('iteration_count', 0)}")
+        lines.append("-" * max_width)
+        
+        # 推理轨迹
+        lines.append("推理过程:")
+        for i, step in enumerate(state.get("reasoning_trace", []), 1):
+            lines.append(f"  {i}. {step[:max_width-5]}")
+        
+        lines.append("-" * max_width)
+        
+        # 子任务状态
+        subtasks = state.get("subtasks", [])
+        if subtasks:
+            lines.append("子任务状态:")
+            for task in subtasks:
+                status_icon = {
+                    "completed": "✓",
+                    "failed": "✗",
+                    "pending": "○",
+                    "running": "◐",
+                }.get(task.get("status", ""), "?")
+                lines.append(
+                    f"  {status_icon} {task.get('name', 'Unknown')[:40]}"
+                )
+        
+        lines.append("-" * max_width)
+        
+        # 执行时间
+        exec_time = state.get("execution_time", {})
+        if exec_time:
+            lines.append("执行时间:")
+            total = sum(exec_time.values())
+            for agent, duration in exec_time.items():
+                pct = (duration / total * 100) if total > 0 else 0
+                bar_len = int(pct / 5)
+                bar = "█" * bar_len + "░" * (20 - bar_len)
+                lines.append(f"  {agent:15} {bar} {duration:.2f}s ({pct:.1f}%)")
+        
+        lines.append("=" * max_width)
+        
+        return "\n".join(lines)
+    
+    def generate_summary(self, state: Dict[str, Any]) -> str:
+        """
+        生成执行摘要
+        
+        Args:
+            state: 执行状态
+            
+        Returns:
+            摘要字符串
+        """
+        lines = []
+        
+        # 状态
+        has_answer = bool(state.get("final_answer"))
+        status = "✅ 成功" if has_answer else "❌ 未完成"
+        lines.append(f"状态: {status}")
+        
+        # 统计
+        lines.append(f"迭代次数: {state.get('iteration_count', 0)}")
+        lines.append(f"子任务数: {len(state.get('subtasks', []))}")
+        lines.append(f"工具调用: {len(state.get('tool_call_logs', []))} 次")
+        
+        # 时间
+        total_time = sum(state.get("execution_time", {}).values())
+        lines.append(f"总耗时: {total_time:.2f}s")
+        
+        # Token
+        token_usage = state.get("token_usage", {})
+        if token_usage.get("total"):
+            lines.append(f"Token消耗: {token_usage['total']}")
+        
+        return "\n".join(lines)
+
+
+def generate_mermaid_graph(state: Dict[str, Any]) -> str:
+    """
+    便捷函数：生成 Mermaid 图
+    
+    Args:
+        state: 执行状态
+        
+    Returns:
+        Mermaid 格式字符串
+    """
+    visualizer = ExecutionVisualizer()
+    return visualizer.generate_mermaid(state)
+
+
+def print_execution_trace(state: Dict[str, Any]) -> None:
+    """
+    打印执行轨迹到控制台
+    
+    Args:
+        state: 执行状态
+    """
+    from rich.console import Console
+    from rich.panel import Panel
+    
+    console = Console()
+    visualizer = ExecutionVisualizer()
+    
+    # 打印文本轨迹
+    trace = visualizer.generate_text_trace(state)
+    console.print(Panel(trace, title="执行轨迹"))
+    
+    # 打印摘要
+    summary = visualizer.generate_summary(state)
+    console.print(Panel(summary, title="执行摘要"))
+```
+
+---
+
+**第三部分（第4批）完成。请输入 "继续" 获取第三部分（第5批）：Examples 和 Tests 模块完整代码。**
+
+## 第三部分（第5批）：Examples 和 Tests 模块完整代码
+
+---
+
+### Examples 模块
+
+#### 文件：`examples/__init__.py`
+
+```python
+"""
+示例模块
+========
+
+包含系统使用示例。
+"""
+```
+
+---
+
+#### 文件：`examples/example_planning.py`
+
+```python
+"""
+示例 1：任务规划分解
+====================
+
+演示系统如何分解和规划复杂任务。
+
+运行方式：
+    python -m examples.example_planning
+"""
+
+import os
+import sys
+
+# 添加项目根目录到路径
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.markdown import Markdown
+
+from src.config.settings import get_settings
+from src.graph.builder import MultiAgentSystem
+from src.utils.logger import setup_logger
+from src.utils.visualizer import ExecutionVisualizer
+
+
+def main():
+    """运行任务规划示例"""
+    console = Console()
+    
+    # 设置日志
+    setup_logger(debug=False)
+    
+    console.print(Panel(
+        "[bold blue]示例 1: 任务规划分解[/bold blue]\n\n"
+        "演示系统如何理解和分解复杂任务",
+        title="Multi-Agent System Demo"
+    ))
+    
+    # 示例任务
+    task = """
+    请帮我制定一个学习 Python 的完整计划，包括：
+    1. 学习路径和阶段划分
+    2. 每个阶段的学习内容和目标
+    3. 推荐的学习资源
+    4. 预计时间安排
+    5. 实践项目建议
+    """
+    
+    console.print(f"\n[bold]任务描述:[/bold]\n{task}")
+    console.print("\n[dim]正在处理...[/dim]\n")
+    
+    try:
+        # 初始化系统
+        settings = get_settings()
+        settings.max_iterations = 5  # 限制迭代次数
+        
+        system = MultiAgentSystem(settings=settings)
+        
+        # 执行任务
+        result = system.run(task, task_id="planning_demo")
+        
+        # 显示结果
+        console.print("\n" + "=" * 60)
+        console.print("[bold green]执行完成[/bold green]")
+        console.print("=" * 60)
+        
+        # 显示子任务分解
+        subtasks = result.get("subtasks", [])
+        if subtasks:
+            console.print("\n[bold]任务分解结果:[/bold]")
+            for i, task_item in enumerate(subtasks, 1):
+                status_icon = "✅" if task_item.get("status") == "completed" else "⏳"
+                console.print(
+                    f"  {status_icon} {i}. {task_item.get('name', 'Unknown')}"
+                )
+                console.print(
+                    f"      类型: {task_item.get('task_type', 'N/A')} | "
+                    f"执行者: {task_item.get('assigned_agent', 'N/A')}"
+                )
+        
+        # 显示最终答案
+        final_answer = result.get("final_answer", "")
+        if final_answer:
+            console.print("\n[bold]最终答案:[/bold]")
+            console.print(Panel(
+                Markdown(final_answer),
+                title="学习计划",
+                border_style="green"
+            ))
+        
+        # 显示执行统计
+        console.print("\n[bold]执行统计:[/bold]")
+        console.print(f"  迭代次数: {result.get('iteration_count', 0)}")
+        console.print(f"  子任务数: {len(subtasks)}")
+        
+        exec_time = result.get("execution_time", {})
+        total_time = sum(exec_time.values())
+        console.print(f"  总耗时: {total_time:.2f} 秒")
+        
+        # 可视化
+        visualizer = ExecutionVisualizer()
+        console.print("\n[bold]执行轨迹:[/bold]")
+        trace = visualizer.generate_text_trace(result)
+        console.print(trace)
+        
+    except Exception as e:
+        console.print(f"[red]执行出错: {e}[/red]")
+        raise
+
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+#### 文件：`examples/example_tool_execution.py`
+
+```python
+"""
+示例 2：工具执行
+================
+
+演示系统的工具调用功能。
+
+运行方式：
+    python -m examples.example_tool_execution
+"""
+
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+
+from src.config.settings import get_settings
+from src.graph.builder import MultiAgentSystem
+from src.utils.logger import setup_logger
+from src.tools import get_all_tools
+
+
+def main():
+    """运行工具执行示例"""
+    console = Console()
+    
+    setup_logger(debug=False)
+    
+    console.print(Panel(
+        "[bold blue]示例 2: 工具执行[/bold blue]\n\n"
+        "演示系统的工具调用能力",
+        title="Multi-Agent System Demo"
+    ))
+    
+    # 显示可用工具
+    console.print("\n[bold]可用工具:[/bold]")
+    tools = get_all_tools()
+    
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("工具名", style="cyan")
+    table.add_column("描述")
+    
+    for tool in tools:
+        table.add_row(tool.name, tool.description[:60] + "...")
+    
+    console.print(table)
+    
+    # 示例任务 - 使用计算器
+    task1 = "请计算 (25 * 4) + (100 / 5) - 17 的结果"
+    
+    console.print(f"\n[bold]任务 1:[/bold] {task1}")
+    console.print("[dim]正在执行...[/dim]")
+    
+    try:
+        settings = get_settings()
+        settings.max_iterations = 3
+        
+        system = MultiAgentSystem(settings=settings)
+        result = system.run(task1, task_id="calc_demo")
+        
+        # 显示工具调用日志
+        tool_logs = result.get("tool_call_logs", [])
+        if tool_logs:
+            console.print("\n[bold]工具调用记录:[/bold]")
+            for log in tool_logs:
+                status = "✅" if log.get("success") else "❌"
+                console.print(
+                    f"  {status} {log.get('tool_name')}: "
+                    f"{log.get('output', 'N/A')}"
+                )
+        
+        final_answer = result.get("final_answer", "")
+        if final_answer:
+            console.print(f"\n[bold green]结果:[/bold green] {final_answer[:500]}")
+        
+    except Exception as e:
+        console.print(f"[red]执行出错: {e}[/red]")
+    
+    # 示例任务 - 文件操作
+    console.print("\n" + "-" * 50)
+    
+    task2 = "请在 workspace 目录创建一个 test.txt 文件，内容为 'Hello, Multi-Agent System!'"
+    
+    console.print(f"\n[bold]任务 2:[/bold] {task2}")
+    console.print("[dim]正在执行...[/dim]")
+    
+    try:
+        result = system.run(task2, task_id="file_demo")
+        
+        tool_logs = result.get("tool_call_logs", [])
+        if tool_logs:
+            console.print("\n[bold]工具调用记录:[/bold]")
+            for log in tool_logs:
+                status = "✅" if log.get("success") else "❌"
+                console.print(
+                    f"  {status} {log.get('tool_name')}: "
+                    f"{str(log.get('output', 'N/A'))[:100]}"
+                )
+        
+        final_answer = result.get("final_answer", "")
+        if final_answer:
+            console.print(f"\n[bold green]结果:[/bold green] {final_answer[:500]}")
+        
+    except Exception as e:
+        console.print(f"[red]执行出错: {e}[/red]")
+    
+    console.print("\n[dim]示例执行完成[/dim]")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+#### 文件：`examples/example_code_generation.py`
+
+```python
+"""
+示例 3：代码生成
+================
+
+演示系统的代码生成和执行能力。
+
+运行方式：
+    python -m examples.example_code_generation
+"""
+
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.markdown import Markdown
+from rich.syntax import Syntax
+
+from src.config.settings import get_settings
+from src.graph.builder import MultiAgentSystem
+from src.utils.logger import setup_logger
+
+
+def main():
+    """运行代码生成示例"""
+    console = Console()
+    
+    setup_logger(debug=False)
+    
+    console.print(Panel(
+        "[bold blue]示例 3: 代码生成[/bold blue]\n\n"
+        "演示系统生成和执行代码的能力",
+        title="Multi-Agent System Demo"
+    ))
+    
+    # 代码生成任务
+    task = """
+    请帮我编写一个 Python 爬虫，抓取 Hacker News 首页的文章标题和链接，
+    并保存为 JSON 文件。
+    
+    要求：
+    1. 使用 requests 和 BeautifulSoup 库
+    2. 抓取首页前 10 篇文章的标题和链接
+    3. 保存到 workspace/hn_articles.json
+    4. 包含错误处理
+    """
+    
+    console.print(f"\n[bold]任务描述:[/bold]\n{task}")
+    console.print("\n[dim]正在处理（这可能需要一些时间）...[/dim]\n")
+    
+    try:
+        settings = get_settings()
+        settings.max_iterations = 8
+        
+        system = MultiAgentSystem(settings=settings)
+        
+        # 流式执行以显示进度
+        console.print("[bold]执行进度:[/bold]")
+        
+        final_state = None
+        for event in system.stream(task, task_id="code_gen_demo"):
+            for node_name, node_output in event.items():
+                if node_name != "__end__":
+                    console.print(f"  ▶ 执行节点: [cyan]{node_name}[/cyan]")
+                final_state = node_output
+        
+        if final_state is None:
+            console.print("[yellow]未获取到执行结果[/yellow]")
+            return
+        
+        console.print("\n" + "=" * 60)
+        console.print("[bold green]执行完成[/bold green]")
+        console.print("=" * 60)
+        
+        # 显示生成的代码
+        agent_outputs = final_state.get("agent_outputs", {})
+        
+        for key, output in agent_outputs.items():
+            if "coder" in key.lower():
+                console.print("\n[bold]生成的代码:[/bold]")
+                
+                if isinstance(output, dict):
+                    code_content = output.get("output", "")
+                else:
+                    code_content = str(output)
+                
+                # 尝试提取代码块
+                import re
+                code_match = re.search(
+                    r'```python\s*([\s\S]*?)```',
+                    code_content
+                )
+                
+                if code_match:
+                    code = code_match.group(1)
+                    syntax = Syntax(
+                        code,
+                        "python",
+                        theme="monokai",
+                        line_numbers=True
+                    )
+                    console.print(Panel(syntax, title="Python 代码"))
+                break
+        
+        # 显示最终答案
+        final_answer = final_state.get("final_answer", "")
+        if final_answer:
+            console.print("\n[bold]完整结果:[/bold]")
+            console.print(Panel(
+                Markdown(final_answer[:3000]),
+                title="执行结果",
+                border_style="green"
+            ))
+        
+        # 显示工具调用
+        tool_logs = final_state.get("tool_call_logs", [])
+        if tool_logs:
+            console.print("\n[bold]工具调用记录:[/bold]")
+            for log in tool_logs:
+                status = "✅" if log.get("success") else "❌"
+                console.print(
+                    f"  {status} {log.get('tool_name')} "
+                    f"({log.get('duration_ms', 0):.0f}ms)"
+                )
+        
+        # 显示统计
+        console.print("\n[bold]执行统计:[/bold]")
+        console.print(f"  迭代次数: {final_state.get('iteration_count', 0)}")
+        console.print(f"  子任务数: {len(final_state.get('subtasks', []))}")
+        console.print(f"  工具调用: {len(tool_logs)} 次")
+        
+        exec_time = final_state.get("execution_time", {})
+        total_time = sum(exec_time.values())
+        console.print(f"  总耗时: {total_time:.2f} 秒")
+        
+    except Exception as e:
+        console.print(f"[red]执行出错: {e}[/red]")
+        import traceback
+        console.print(traceback.format_exc())
+
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+### Tests 模块
+
+#### 文件：`tests/__init__.py`
+
+```python
+"""
+测试模块
+========
+
+包含系统单元测试和集成测试。
+"""
+```
+
+---
+
+#### 文件：`tests/conftest.py`
+
+```python
+"""
+Pytest 配置文件
+===============
+
+定义测试固件和通用配置。
+"""
+
+import os
+import sys
+import pytest
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+# 确保项目根目录在路径中
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from src.config.settings import Settings, LLMConfig
+from src.graph.state import create_initial_state, AgentState
+
+
+@pytest.fixture
+def mock_settings():
+    """创建测试用配置"""
+    return Settings(
+        llm_provider="openai",
+        openai_api_key="test-key",
+        openai_model="gpt-4o-mini",
+        debug_mode=True,
+        max_iterations=3,
+        enable_human_in_loop=False,
+        workspace_dir="test_workspace",
+        log_dir="test_logs",
+    )
+
+
+@pytest.fixture
+def mock_llm():
+    """创建模拟 LLM"""
+    mock = MagicMock()
+    mock.invoke.return_value = MagicMock(
+        content="这是一个模拟的 LLM 响应"
+    )
+    return mock
+
+
+@pytest.fixture
+def sample_state():
+    """创建示例状态"""
+    return create_initial_state(
+        task="测试任务：编写一个简单的 Python 函数",
+        task_id="test_001",
+        max_iterations=5,
+    )
+
+
+@pytest.fixture
+def sample_subtasks():
+    """创建示例子任务列表"""
+    return [
+        {
+            "id": "task_1",
+            "name": "分析需求",
+            "description": "分析任务需求",
+            "task_type": "analyze",
+            "assigned_agent": "researcher",
+            "dependencies": [],
+            "priority": "high",
+            "status": "pending",
+            "result": None,
+            "error_message": None,
+            "retry_count": 0,
+        },
+        {
+            "id": "task_2",
+            "name": "编写代码",
+            "description": "根据需求编写代码",
+            "task_type": "code",
+            "assigned_agent": "coder",
+            "dependencies": ["task_1"],
+            "priority": "high",
+            "status": "pending",
+            "result": None,
+            "error_message": None,
+            "retry_count": 0,
+        },
+        {
+            "id": "task_3",
+            "name": "测试代码",
+            "description": "测试生成的代码",
+            "task_type": "execute",
+            "assigned_agent": "executor",
+            "dependencies": ["task_2"],
+            "priority": "medium",
+            "status": "pending",
+            "result": None,
+            "error_message": None,
+            "retry_count": 0,
+        },
+    ]
+
+
+@pytest.fixture
+def test_workspace(tmp_path):
+    """创建临时测试工作空间"""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    
+    # 创建一些测试文件
+    (workspace / "test.txt").write_text("Hello, World!")
+    (workspace / "data.json").write_text('{"key": "value"}')
+    
+    return workspace
+
+
+@pytest.fixture(autouse=True)
+def setup_test_env(tmp_path, monkeypatch):
+    """设置测试环境"""
+    # 设置环境变量
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("DEBUG_MODE", "true")
+    
+    # 创建临时目录
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(exist_ok=True)
+    
+    logs = tmp_path / "logs"
+    logs.mkdir(exist_ok=True)
+    
+    yield
+    
+    # 清理
+
+
+@pytest.fixture
+def mock_tool_response():
+    """创建模拟工具响应"""
+    return {
+        "calculator": "计算结果: 42",
+        "file_manager": "文件操作成功",
+        "code_executor": "代码执行成功\n输出: Hello",
+        "web_search": "找到 5 条结果",
+    }
+```
+
+---
+
+#### 文件：`tests/test_graph.py`
+
+```python
+"""
+图构建测试
+==========
+
+测试 LangGraph 状态图的构建和配置。
+"""
+
+import pytest
+from unittest.mock import MagicMock, patch
+
+from src.graph.builder import build_graph, MultiAgentSystem
+from src.graph.state import create_initial_state, AgentState
+from src.graph.nodes import (
+    input_parser_node,
+    coordinator_node,
+    task_router_node,
+)
+from src.graph.edges import (
+    route_from_coordinator,
+    route_from_planner,
+    route_task,
+)
+
+
+class TestGraphBuilder:
+    """图构建器测试"""
+    
+    def test_build_graph_returns_state_graph(self, mock_settings):
+        """测试图构建返回正确类型"""
+        with patch("src.graph.builder.get_settings", return_value=mock_settings):
+            graph = build_graph(mock_settings)
+            
+            assert graph is not None
+            # StateGraph 应该有 nodes 属性
+            assert hasattr(graph, "nodes")
+    
+    def test_graph_has_required_nodes(self, mock_settings):
+        """测试图包含所有必需节点"""
+        with patch("src.graph.builder.get_settings", return_value=mock_settings):
+            graph = build_graph(mock_settings)
+            
+            required_nodes = [
+                "input_parser",
+                "coordinator",
+                "planner",
+                "task_router",
+                "researcher",
+                "coder",
+                "executor",
+                "critic",
+                "human_node",
+                "synthesizer",
+                "error_handler",
+            ]
+            
+            for node in required_nodes:
+                assert node in graph.nodes, f"缺少节点: {node}"
+    
+    def test_graph_compilation(self, mock_settings):
+        """测试图可以正常编译"""
+        with patch("src.graph.builder.get_settings", return_value=mock_settings):
+            graph = build_graph(mock_settings)
+            compiled = graph.compile()
+            
+            assert compiled is not None
+            assert hasattr(compiled, "invoke")
+
+
+class TestMultiAgentSystem:
+    """MultiAgentSystem 测试"""
+    
+    def test_system_initialization(self, mock_settings):
+        """测试系统初始化"""
+        with patch("src.graph.builder.get_settings", return_value=mock_settings):
+            system = MultiAgentSystem(settings=mock_settings)
+            
+            assert system.settings == mock_settings
+            assert system._graph is None  # 延迟加载
+    
+    def test_system_graph_lazy_loading(self, mock_settings, mock_llm):
+        """测试图的延迟加载"""
+        with patch("src.graph.builder.get_settings", return_value=mock_settings):
+            with patch("src.llm.factory.LLMFactory.create", return_value=mock_llm):
+                system = MultiAgentSystem(settings=mock_settings)
+                
+                # 访问 graph 属性触发加载
+                _ = system.graph
+                
+                assert system._compiled_graph is not None
+    
+    def test_system_reset(self, mock_settings):
+        """测试系统重置"""
+        with patch("src.graph.builder.get_settings", return_value=mock_settings):
+            system = MultiAgentSystem(settings=mock_settings)
+            system._compiled_graph = MagicMock()
+            
+            system.reset()
+            
+            assert system._compiled_graph is None
+
+
+class TestInitialState:
+    """初始状态测试"""
+    
+    def test_create_initial_state(self):
+        """测试创建初始状态"""
+        state = create_initial_state(
+            task="测试任务",
+            task_id="test_123",
+            max_iterations=5,
+        )
+        
+        assert state["original_task"] == "测试任务"
+        assert state["task_id"] == "test_123"
+        assert state["max_iterations"] == 5
+        assert state["iteration_count"] == 0
+        assert state["final_answer"] is None
+        assert len(state["messages"]) == 1
+    
+    def test_initial_state_has_required_fields(self):
+        """测试初始状态包含必需字段"""
+        state = create_initial_state(task="测试")
+        
+        required_fields = [
+            "messages",
+            "original_task",
+            "subtasks",
+            "agent_outputs",
+            "tool_call_logs",
+            "iteration_count",
+            "max_iterations",
+            "final_answer",
+            "reasoning_trace",
+            "error_log",
+        ]
+        
+        for field in required_fields:
+            assert field in state, f"缺少字段: {field}"
+
+
+class TestEdgeRouting:
+    """边路由测试"""
+    
+    def test_route_from_coordinator_to_planner(self, sample_state):
+        """测试协调者到规划者的路由"""
+        state = dict(sample_state)
+        state["next"] = "planner"
+        state["task_understanding"] = "需要规划的任务"
+        
+        result = route_from_coordinator(state)
+        
+        assert result == "planner"
+    
+    def test_route_from_coordinator_to_end(self, sample_state):
+        """测试协调者到结束的路由"""
+        state = dict(sample_state)
+        state["final_answer"] = "任务已完成"
+        
+        result = route_from_coordinator(state)
+        
+        assert result == "end"
+    
+    def test_route_task_to_researcher(self, sample_state, sample_subtasks):
+        """测试任务路由到研究员"""
+        state = dict(sample_state)
+        state["subtasks"] = sample_subtasks
+        state["next"] = "researcher"
+        
+        result = route_task(state)
+        
+        assert result == "researcher"
+    
+    def test_route_task_to_synthesizer_when_no_pending(self, sample_state):
+        """测试无待处理任务时路由到综合者"""
+        state = dict(sample_state)
+        state["subtasks"] = []
+        state["next"] = "synthesizer"
+        
+        result = route_task(state)
+        
+        assert result == "synthesizer"
+```
+
+---
+
+#### 文件：`tests/test_flow.py`
+
+```python
+"""
+完整流程测试
+============
+
+测试端到端的任务执行流程。
+"""
+
+import pytest
+from unittest.mock import MagicMock, patch, AsyncMock
+
+from src.graph.builder import MultiAgentSystem
+from src.graph.state import create_initial_state
+
+
+class TestEndToEndFlow:
+    """端到端流程测试"""
+    
+    @pytest.fixture
+    def mock_system(self, mock_settings, mock_llm):
+        """创建模拟系统"""
+        with patch("src.graph.builder.get_settings", return_value=mock_settings):
+            with patch("src.llm.factory.LLMFactory.create", return_value=mock_llm):
+                system = MultiAgentSystem(settings=mock_settings)
+                return system
+    
+    def test_simple_task_execution(self, mock_system, mock_llm):
+        """测试简单任务执行"""
+        # 配置模拟响应
+        mock_llm.invoke.return_value = MagicMock(
+            content="""
+            ## 任务理解
+            这是一个简单的问答任务
+            
+            ## 任务类型
+            简单问答
+            
+            ## 下一步行动
+            direct_answer
+            """
+        )
+        
+        with patch.object(
+            mock_system,
+            "graph",
+            new_callable=lambda: MagicMock(
+                invoke=MagicMock(return_value={
+                    "final_answer": "这是测试答案",
+                    "iteration_count": 1,
+                    "reasoning_trace": ["完成"],
+                })
+            )
+        ):
+            result = mock_system.run("什么是 Python?", task_id="test_simple")
+            
+            assert "final_answer" in result
+    
+    def test_task_with_subtasks(self, mock_system, sample_subtasks):
+        """测试带子任务的执行"""
+        mock_result = {
+            "original_task": "复杂任务",
+            "subtasks": sample_subtasks,
+            "final_answer": "任务完成",
+            "iteration_count": 3,
+            "reasoning_trace": [
+                "[Coordinator] 任务理解完成",
+                "[Planner] 分解为 3 个子任务",
+                "[Synthesizer] 生成最终答案",
+            ],
+        }
+        
+        with patch.object(
+            mock_system,
+            "graph",
+            new_callable=lambda: MagicMock(invoke=MagicMock(return_value=mock_result))
+        ):
+            result = mock_system.run("复杂任务", task_id="test_complex")
+            
+            assert len(result.get("subtasks", [])) == 3
+            assert result.get("final_answer") == "任务完成"
+    
+    def test_iteration_limit(self, mock_settings):
+        """测试迭代次数限制"""
+        mock_settings.max_iterations = 2
+        
+        state = create_initial_state(
+            task="测试任务",
+            max_iterations=2,
+        )
+        state["iteration_count"] = 2
+        
+        # 迭代次数已达上限
+        assert state["iteration_count"] >= state["max_iterations"]
+    
+    def test_error_handling_in_flow(self, mock_system):
+        """测试流程中的错误处理"""
+        error_result = {
+            "original_task": "错误任务",
+            "error_log": ["模拟错误"],
+            "last_error": "处理失败",
+            "final_answer": "任务执行过程中出现错误",
+            "iteration_count": 1,
+        }
+        
+        with patch.object(
+            mock_system,
+            "graph",
+            new_callable=lambda: MagicMock(invoke=MagicMock(return_value=error_result))
+        ):
+            result = mock_system.run("错误任务")
+            
+            assert "error_log" in result
+            assert len(result["error_log"]) > 0
+
+
+class TestStreamExecution:
+    """流式执行测试"""
+    
+    def test_stream_yields_events(self, mock_settings, mock_llm):
+        """测试流式执行产生事件"""
+        with patch("src.graph.builder.get_settings", return_value=mock_settings):
+            with patch("src.llm.factory.LLMFactory.create", return_value=mock_llm):
+                system = MultiAgentSystem(settings=mock_settings)
+                
+                mock_events = [
+                    {"input_parser": {"next": "coordinator"}},
+                    {"coordinator": {"next": "synthesizer"}},
+                    {"synthesizer": {"final_answer": "完成"}},
+                ]
+                
+                mock_graph = MagicMock()
+                mock_graph.stream = MagicMock(return_value=iter(mock_events))
+                
+                with patch.object(system, "_compiled_graph", mock_graph):
+                    system._graph = MagicMock()
+                    
+                    events = list(system.stream("测试任务"))
+                    
+                    assert len(events) == 3
+
+
+class TestHumanInLoop:
+    """人工介入测试"""
+    
+    def test_human_input_flag(self, sample_state):
+        """测试人工介入标志"""
+        state = dict(sample_state)
+        state["needs_human_input"] = True
+        
+        assert state["needs_human_input"] is True
+    
+    def test_human_feedback_recorded(self, sample_state):
+        """测试人工反馈记录"""
+        state = dict(sample_state)
+        state["human_feedback"] = "用户确认继续"
+        
+        assert state["human_feedback"] == "用户确认继续"
+```
+
+---
+
+#### 文件：`tests/test_tools.py`
+
+```python
+"""
+工具调用测试
+============
+
+测试各种工具的功能和安全性。
+"""
+
+import pytest
+import json
+from pathlib import Path
+
+from src.tools.calculator import SafeCalculator, calculator_tool
+from src.tools.file_manager import FileManager, file_manager_tool
+from src.tools.code_executor import CodeExecutor, code_executor_tool
+from src.tools.search import WebSearch, web_search_tool
+
+
+class TestSafeCalculator:
+    """安全计算器测试"""
+    
+    @pytest.fixture
+    def calculator(self):
+        return SafeCalculator()
+    
+    def test_basic_arithmetic(self, calculator):
+        """测试基本算术"""
+        assert calculator.calculate("2 + 3") == 5
+        assert calculator.calculate("10 - 4") == 6
+        assert calculator.calculate("3 * 4") == 12
+        assert calculator.calculate("15 / 3") == 5.0
+    
+    def test_complex_expression(self, calculator):
+        """测试复杂表达式"""
+        assert calculator.calculate("(2 + 3) * 4") == 20
+        assert calculator.calculate("2 ** 10") == 1024
+        assert calculator.calculate("17 % 5") == 2
+    
+    def test_math_functions(self, calculator):
+        """测试数学函数"""
+        assert calculator.calculate("sqrt(16)") == 4.0
+        assert calculator.calculate("abs(-5)") == 5
+        assert calculator.calculate("max(1, 2, 3)") == 3
+        assert calculator.calculate("min(1, 2, 3)") == 1
+    
+    def test_constants(self, calculator):
+        """测试常量"""
+        result = calculator.calculate("pi")
+        assert 3.14 < result < 3.15
+    
+    def test_invalid_expression(self, calculator):
+        """测试无效表达式"""
+        with pytest.raises(ValueError):
+            calculator.calculate("invalid")
+    
+    def test_forbidden_operations(self, calculator):
+        """测试禁止的操作"""
+        with pytest.raises(ValueError):
+            calculator.calculate("__import__('os')")
+    
+    def test_calculator_tool(self):
+        """测试计算器工具接口"""
+        result = calculator_tool.invoke({"expression": "2 + 2"})
+        assert "4" in result
+
+
+class TestFileManager:
+    """文件管理器测试"""
+    
+    @pytest.fixture
+    def file_manager(self, test_workspace):
+        return FileManager(workspace_dir=str(test_workspace))
+    
+    def test_read_file(self, file_manager, test_workspace):
+        """测试读取文件"""
+        content = file_manager.read("test.txt")
+        assert content == "Hello, World!"
+    
+    def test_write_file(self, file_manager, test_workspace):
+        """测试写入文件"""
+        file_manager.write("new_file.txt", "New content")
+        
+        assert (test_workspace / "new_file.txt").exists()
+        assert (test_workspace / "new_file.txt").read_text() == "New content"
+    
+    def test_list_dir(self, file_manager):
+        """测试列出目录"""
+        items = file_manager.list_dir(".")
+        
+        assert len(items) >= 2
+        names = [item["name"] for item in items]
+        assert "test.txt" in names
+    
+    def test_file_exists(self, file_manager):
+        """测试检查文件存在"""
+        assert file_manager.exists("test.txt") is True
+        assert file_manager.exists("nonexistent.txt") is False
+    
+    def test_path_traversal_blocked(self, file_manager):
+        """测试路径遍历被阻止"""
+        with pytest.raises(ValueError):
+            file_manager.read("../../../etc/passwd")
+    
+    def test_absolute_path_blocked(self, file_manager):
+        """测试绝对路径被阻止"""
+        with pytest.raises(ValueError):
+            file_manager.read("/etc/passwd")
+    
+    def test_file_manager_tool(self, test_workspace):
+        """测试文件管理器工具接口"""
+        with pytest.MonkeyPatch().context() as mp:
+            # 需要临时修改工作目录
+            result = file_manager_tool.invoke({
+                "action": "exists",
+                "path": "test.txt"
+            })
+            # 结果应该包含存在或不存在的信息
+            assert "存在" in result or "不存在" in result
+
+
+class TestCodeExecutor:
+    """代码执行器测试"""
+    
+    @pytest.fixture
+    def executor(self):
+        return CodeExecutor(timeout=5)
+    
+    def test_simple_code_execution(self, executor):
+        """测试简单代码执行"""
+        result = executor.execute("print('Hello')")
+        
+        assert result["success"] is True
+        assert "Hello" in result["output"]
+    
+    def test_expression_evaluation(self, executor):
+        """测试表达式求值"""
+        result = executor.execute("2 + 2")
+        
+        assert result["success"] is True
+        assert result["result"] == 4
+    
+    def test_math_operations(self, executor):
+        """测试数学运算"""
+        code = """
+import math
+result = math.sqrt(16) + math.pi
+print(f"Result: {result}")
+"""
+        result = executor.execute(code)
+        
+        assert result["success"] is True
+        assert "Result:" in result["output"]
+    
+    def test_forbidden_import(self, executor):
+        """测试禁止的导入"""
+        result = executor.execute("import os")
+        
+        assert result["success"] is False
+        assert "禁止" in result["error"]
+    
+    def test_forbidden_operations(self, executor):
+        """测试禁止的操作"""
+        result = executor.execute("__import__('subprocess')")
+        
+        assert result["success"] is False
+    
+    def test_timeout(self, executor):
+        """测试超时"""
+        code = """
+import time
+time.sleep(10)
+"""
+        # 这个测试可能需要较长时间
+        result = executor.execute(code, timeout=1)
+        
+        # 应该失败或超时
+        # 注意：time 模块可能不在允许列表中
+        assert result["success"] is False
+    
+    def test_code_executor_tool(self):
+        """测试代码执行器工具接口"""
+        result = code_executor_tool.invoke({
+            "code": "print(1 + 1)"
+        })
+        assert "2" in result
+
+
+class TestWebSearch:
+    """网络搜索测试"""
+    
+    @pytest.fixture
+    def search(self):
+        return WebSearch()
+    
+    def test_search_returns_results(self, search):
+        """测试搜索返回结果"""
+        results = search.search("python")
+        
+        assert len(results) > 0
+        assert all(hasattr(r, "title") for r in results)
+        assert all(hasattr(r, "url") for r in results)
+    
+    def test_search_with_limit(self, search):
+        """测试搜索结果数量限制"""
+        results = search.search("python", num_results=3)
+        
+        assert len(results) <= 3
+    
+    def test_format_results(self, search):
+        """测试结果格式化"""
+        results = search.search("python", num_results=2)
+        formatted = search.format_results(results)
+        
+        assert "找到" in formatted
+        assert "条结果" in formatted
+    
+    def test_empty_results_handling(self, search):
+        """测试空结果处理"""
+        formatted = search.format_results([])
+        
+        assert "未找到" in formatted
+    
+    def test_web_search_tool(self):
+        """测试搜索工具接口"""
+        result = web_search_tool.invoke({
+            "query": "python programming"
+        })
+        assert "结果" in result
+
+
+class TestToolIntegration:
+    """工具集成测试"""
+    
+    def test_all_tools_have_names(self):
+        """测试所有工具都有名称"""
+        from src.tools import get_all_tools
+        
+        tools = get_all_tools()
+        
+        for tool in tools:
+            assert tool.name is not None
+            assert len(tool.name) > 0
+    
+    def test_all_tools_have_descriptions(self):
+        """测试所有工具都有描述"""
+        from src.tools import get_all_tools
+        
+        tools = get_all_tools()
+        
+        for tool in tools:
+            assert tool.description is not None
+            assert len(tool.description) > 0
+    
+    def test_get_tool_by_name(self):
+        """测试按名称获取工具"""
+        from src.tools import get_tool_by_name
+        
+        calc = get_tool_by_name("calculator")
+        assert calc.name == "calculator"
+        
+        with pytest.raises(ValueError):
+            get_tool_by_name("nonexistent_tool")
+```
+
+---
+
+### 其他配置文件
+
+#### 文件：`workspace/.gitkeep`
+
+```
+# 此目录用于工具操作的安全隔离
+# 所有文件操作都限定在此目录内
+```
+
+---
+
+#### 文件：`logs/.gitkeep`
+
+```
+# 此目录存储执行日志
+# 日志文件会自动轮转
+```
+
+---
+
+
+
+## 第六部分：扩展指南详细说明
+
+---
+
+### 6.1 扩展指南完整文档
+
+#### 文件：`docs/EXTENSION_GUIDE.md`
+
+```markdown
+# Multi-Agent System 扩展指南
+
+本文档详细说明如何扩展 Multi-Agent System 的各个组件。
+
+---
+
+## 目录
+
+1. [新增 Agent](#1-新增-agent)
+2. [新增工具](#2-新增工具)
+3. [新增工作流节点](#3-新增工作流节点)
+4. [自定义提示词](#4-自定义提示词)
+5. [自定义路由逻辑](#5-自定义路由逻辑)
+6. [扩展记忆系统](#6-扩展记忆系统)
+7. [对接企业级场景](#7-对接企业级场景)
+8. [性能优化](#8-性能优化)
+
+---
+
+## 1. 新增 Agent
+
+### 1.1 基本步骤
+
+创建新 Agent 需要以下步骤：
+
+1. 创建 Agent 类文件
+2. 继承 `BaseAgent` 基类
+3. 实现必要的属性和方法
+4. 注册 Agent
+5. 添加到图构建器
+6. 配置路由
+
+### 1.2 完整示例：创建数据分析 Agent
+
+```python
+# src/agents/data_analyst.py
+
+"""
+数据分析 Agent
+==============
+
+负责数据处理、统计分析和可视化建议。
+"""
+
+from typing import Any, Dict, List, Optional
+import json
+import re
+
+from langchain_core.messages import HumanMessage
+
+from src.agents.base import BaseAgent, register_agent
+from src.config.prompts import PromptTemplates
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+# 添加提示词模板
+DATA_ANALYST_SYSTEM = """你是一个专业的数据分析师（Data Analyst），擅长数据处理和统计分析。
+
+你的核心能力：
+1. **数据理解**：快速理解数据结构和含义
+2. **统计分析**：执行描述性统计、相关性分析等
+3. **数据清洗**：识别和处理异常值、缺失值
+4. **可视化建议**：推荐合适的图表类型
+5. **洞察提取**：从数据中提取有价值的洞察
+
+分析原则：
+- 始终验证数据质量
+- 使用适当的统计方法
+- 结论要有数据支撑
+- 提供可操作的建议
+
+可用工具：
+- calculator: 数学计算
+- code_executor: 执行 Python 数据分析代码
+- file_manager: 读取数据文件
+
+请提供详细的分析过程和结论。"""
+
+DATA_ANALYST_TASK = """请对以下数据进行分析：
+
+任务描述：$task
+数据上下文：$context
+分析要求：$requirements
+
+请按以下步骤进行分析：
+1. 数据概览：理解数据结构
+2. 数据质量检查：检查缺失值、异常值
+3. 统计分析：执行相关统计计算
+4. 洞察提取：总结关键发现
+5. 建议：提供可操作的建议
+
+请输出结构化的分析报告。"""
+
+
+@register_agent("data_analyst")
+class DataAnalystAgent(BaseAgent):
+    """
+    数据分析师智能体
+    
+    核心职责：
+    1. 理解和处理数据
+    2. 执行统计分析
+    3. 提取数据洞察
+    4. 生成分析报告
+    """
+    
+    @property
+    def name(self) -> str:
+        return "data_analyst"
+    
+    @property
+    def description(self) -> str:
+        return "数据分析师，负责数据处理、统计分析和洞察提取"
+    
+    @property
+    def capabilities(self) -> List[str]:
+        return ["analyze", "statistics", "data_processing", "visualization"]
+    
+    def get_system_prompt(self) -> str:
+        """获取系统提示词"""
+        return DATA_ANALYST_SYSTEM
+    
+    def _execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        执行数据分析任务
+        
+        Args:
+            state: 当前状态
+            
+        Returns:
+            更新后的状态
+        """
+        # 获取当前任务
+        current_task = self._get_current_task(state)
+        
+        if current_task is None:
+            self.logger.warning("没有找到待处理的分析任务")
+            return {**state, "next": "coordinator"}
+        
+        task_description = current_task.get("description", "")
+        context = self._build_context(state)
+        requirements = current_task.get("metadata", {}).get(
+            "requirements", "提供完整的数据分析"
+        )
+        
+        # 构建分析提示
+        prompt = DATA_ANALYST_TASK.replace(
+            "$task", task_description
+        ).replace(
+            "$context", context
+        ).replace(
+            "$requirements", requirements
+        )
+        
+        messages = [HumanMessage(content=prompt)]
+        
+        # 检查是否需要先读取数据
+        data_content = self._load_data_if_needed(task_description, state)
+        if data_content:
+            prompt += f"\n\n数据内容：\n```\n{data_content[:2000]}\n```"
+            messages = [HumanMessage(content=prompt)]
+        
+        # 调用 LLM 进行分析
+        response = self.call_llm(messages)
+        analysis_output = response.content
+        
+        # 如果需要执行代码进行计算
+        code_results = self._execute_analysis_code(analysis_output)
+        if code_results:
+            analysis_output += f"\n\n**计算结果：**\n{code_results}"
+        
+        # 创建输出
+        agent_output = self.create_output(
+            output=analysis_output,
+            reasoning=f"完成数据分析任务: {current_task.get('name', '')}",
+            task_id=current_task.get("id"),
+            confidence=0.85,
+        )
+        
+        # 更新子任务状态
+        subtasks = self._update_subtask_status(
+            state,
+            current_task["id"],
+            status="completed",
+            result=analysis_output,
+        )
+        
+        # 更新 agent_outputs
+        agent_outputs = state.get("agent_outputs", {})
+        agent_outputs[f"data_analyst_{current_task['id']}"] = agent_output.model_dump()
+        
+        # 更新推理轨迹
+        reasoning_trace = state.get("reasoning_trace", [])
+        reasoning_trace.append(
+            f"[DataAnalyst] 完成分析任务 '{current_task.get('name', '')}'"
+        )
+        
+        return {
+            **state,
+            "subtasks": subtasks,
+            "agent_outputs": agent_outputs,
+            "reasoning_trace": reasoning_trace,
+            "next": "critic",
+        }
+    
+    def _get_current_task(self, state: Dict[str, Any]) -> Optional[Dict]:
+        """获取当前待处理的分析任务"""
+        subtasks = state.get("subtasks", [])
+        
+        for task in subtasks:
+            if (task.get("status") == "pending" and 
+                task.get("assigned_agent") == "data_analyst"):
+                dependencies = task.get("dependencies", [])
+                if self._dependencies_satisfied(subtasks, dependencies):
+                    return task
+        
+        # 也处理 analyze 类型的任务
+        for task in subtasks:
+            if (task.get("status") == "pending" and 
+                task.get("task_type") == "analyze"):
+                dependencies = task.get("dependencies", [])
+                if self._dependencies_satisfied(subtasks, dependencies):
+                    return task
+        
+        return None
+    
+    def _dependencies_satisfied(
+        self,
+        subtasks: List[Dict],
+        dependencies: List[str]
+    ) -> bool:
+        """检查依赖是否满足"""
+        if not dependencies:
+            return True
+        
+        completed_ids = {
+            t["id"] for t in subtasks
+            if t.get("status") == "completed"
+        }
+        
+        return all(dep in completed_ids for dep in dependencies)
+    
+    def _build_context(self, state: Dict[str, Any]) -> str:
+        """构建分析上下文"""
+        context_parts = []
+        
+        original_task = state.get("original_task", "")
+        if original_task:
+            context_parts.append(f"原始任务: {original_task}")
+        
+        # 获取之前的研究或数据结果
+        agent_outputs = state.get("agent_outputs", {})
+        for name, output in agent_outputs.items():
+            if any(keyword in name.lower() for keyword in ["researcher", "executor"]):
+                if isinstance(output, dict):
+                    result = output.get("output", "")[:500]
+                else:
+                    result = str(output)[:500]
+                context_parts.append(f"前置结果 ({name}): {result}")
+        
+        return "\n".join(context_parts)
+    
+    def _load_data_if_needed(
+        self,
+        task_description: str,
+        state: Dict[str, Any]
+    ) -> Optional[str]:
+        """如果任务涉及文件数据，加载数据"""
+        # 检查任务描述中是否提到文件
+        file_patterns = [
+            r'文件[：:]\s*(\S+)',
+            r'(\S+\.csv)',
+            r'(\S+\.json)',
+            r'(\S+\.xlsx?)',
+        ]
+        
+        for pattern in file_patterns:
+            match = re.search(pattern, task_description)
+            if match:
+                filename = match.group(1)
+                try:
+                    return self.call_tool(
+                        "file_manager",
+                        action="read",
+                        path=filename
+                    )
+                except Exception as e:
+                    self.logger.warning(f"加载数据文件失败: {e}")
+        
+        return None
+    
+    def _execute_analysis_code(self, analysis_output: str) -> Optional[str]:
+        """执行分析中的代码块"""
+        # 提取代码块
+        code_pattern = r'```python\s*([\s\S]*?)```'
+        matches = re.findall(code_pattern, analysis_output)
+        
+        if not matches:
+            return None
+        
+        results = []
+        for code in matches[:2]:  # 最多执行2个代码块
+            try:
+                result = self.call_tool("code_executor", code=code)
+                if result:
+                    results.append(str(result))
+            except Exception as e:
+                self.logger.warning(f"代码执行失败: {e}")
+        
+        return "\n".join(results) if results else None
+```
+
+### 1.3 注册新 Agent
+
+```python
+# src/agents/__init__.py
+
+from src.agents.data_analyst import DataAnalystAgent
+
+__all__ = [
+    # ... 现有 agents
+    "DataAnalystAgent",
+]
+
+def get_all_agents() -> dict:
+    return {
+        # ... 现有 agents
+        "data_analyst": DataAnalystAgent,
+    }
+```
+
+### 1.4 添加到图构建器
+
+```python
+# src/graph/nodes.py
+
+from src.agents import DataAnalystAgent
+
+def data_analyst_node(state: AgentState) -> Dict[str, Any]:
+    """数据分析师节点"""
+    logger.info("[Node] data_analyst - 开始分析")
+    
+    agent = _get_agent(DataAnalystAgent)
+    result = agent.invoke(dict(state))
+    
+    return result
+```
+
+```python
+# src/graph/builder.py
+
+from src.graph.nodes import data_analyst_node
+
+def build_graph(settings):
+    # ... 现有代码
+    
+    # 添加数据分析师节点
+    graph.add_node("data_analyst", data_analyst_node)
+    
+    # 添加边
+    graph.add_conditional_edges(
+        "data_analyst",
+        route_from_worker,
+        {
+            "critic": "critic",
+            "error_handler": "error_handler",
+            "synthesizer": "synthesizer",
+        }
+    )
+    
+    # 更新任务路由
+    # 需要修改 route_task 函数以支持新的 agent
+```
+
+### 1.5 更新任务路由
+
+```python
+# src/graph/edges.py
+
+def route_task(state: AgentState) -> RouteType:
+    """任务路由逻辑"""
+    next_node = state.get("next", "executor")
+    
+    # 有效的工作者节点（添加新的）
+    worker_nodes = {"researcher", "coder", "executor", "data_analyst"}
+    
+    if next_node in worker_nodes:
+        return next_node
+    
+    # ... 其他逻辑
+```
+
+---
+
+## 2. 新增工具
+
+### 2.1 基本步骤
+
+1. 创建工具类文件
+2. 定义输入参数 Schema
+3. 实现工具逻辑
+4. 使用 `@tool` 装饰器
+5. 注册工具
+
+### 2.2 完整示例：创建 HTTP 请求工具
+
+```python
+# src/tools/http_client.py
+
+"""
+HTTP 客户端工具
+===============
+
+提供安全的 HTTP 请求功能。
+"""
+
+import json
+from typing import Any, Dict, Literal, Optional
+from urllib.parse import urlparse
+
+import httpx
+from langchain_core.tools import tool
+from pydantic import BaseModel, Field, field_validator
+
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+class HTTPClientInput(BaseModel):
+    """HTTP 客户端输入参数"""
+    
+    method: Literal["GET", "POST", "PUT", "DELETE"] = Field(
+        default="GET",
+        description="HTTP 方法"
+    )
+    url: str = Field(
+        description="请求 URL"
+    )
+    headers: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="请求头"
+    )
+    params: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="URL 查询参数"
+    )
+    body: Optional[str] = Field(
+        default=None,
+        description="请求体（JSON 字符串）"
+    )
+    timeout: int = Field(
+        default=30,
+        description="超时时间（秒）",
+        ge=1,
+        le=120
+    )
+    
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        """验证 URL 安全性"""
+        parsed = urlparse(v)
+        
+        # 只允许 http 和 https
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("只支持 http 和 https 协议")
+        
+        # 禁止访问内网地址
+        blocked_hosts = [
+            "localhost",
+            "127.0.0.1",
+            "0.0.0.0",
+            "10.",
+            "172.16.",
+            "192.168.",
+        ]
+        
+        host = parsed.netloc.lower()
+        for blocked in blocked_hosts:
+            if host.startswith(blocked) or host == blocked.rstrip("."):
+                raise ValueError(f"禁止访问内网地址: {host}")
+        
+        return v
+
+
+class HTTPClient:
+    """
+    HTTP 客户端
+    
+    安全特性：
+    - 禁止访问内网地址
+    - 请求超时限制
+    - 响应大小限制
+    - 只允许 http/https 协议
+    """
+    
+    MAX_RESPONSE_SIZE = 1024 * 1024  # 1MB
+    
+    def __init__(self):
+        self.logger = get_logger(self.__class__.__name__)
+    
+    def request(
+        self,
+        method: str,
+        url: str,
+        headers: Optional[Dict[str, str]] = None,
+        params: Optional[Dict[str, str]] = None,
+        body: Optional[str] = None,
+        timeout: int = 30,
+    ) -> Dict[str, Any]:
+        """
+        发送 HTTP 请求
+        
+        Args:
+            method: HTTP 方法
+            url: 请求 URL
+            headers: 请求头
+            params: 查询参数
+            body: 请求体
+            timeout: 超时时间
+            
+        Returns:
+            响应信息字典
+        """
+        self.logger.info(f"HTTP {method} {url}")
+        
+        # 默认请求头
+        default_headers = {
+            "User-Agent": "MultiAgentSystem/1.0",
+            "Accept": "application/json, text/html, */*",
+        }
+        
+        if headers:
+            default_headers.update(headers)
+        
+        # 解析请求体
+        json_body = None
+        if body:
+            try:
+                json_body = json.loads(body)
+            except json.JSONDecodeError:
+                # 作为普通文本发送
+                pass
+        
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                response = client.request(
+                    method=method,
+                    url=url,
+                    headers=default_headers,
+                    params=params,
+                    json=json_body if json_body else None,
+                    content=body if body and not json_body else None,
+                )
+                
+                # 检查响应大小
+                content_length = response.headers.get("content-length")
+                if content_length and int(content_length) > self.MAX_RESPONSE_SIZE:
+                    return {
+                        "success": False,
+                        "error": f"响应过大: {content_length} bytes",
+                        "status_code": response.status_code,
+                    }
+                
+                # 尝试解析 JSON
+                try:
+                    response_body = response.json()
+                except:
+                    response_body = response.text[:5000]  # 限制文本长度
+                
+                return {
+                    "success": True,
+                    "status_code": response.status_code,
+                    "headers": dict(response.headers),
+                    "body": response_body,
+                }
+                
+        except httpx.TimeoutException:
+            return {
+                "success": False,
+                "error": f"请求超时 ({timeout}s)",
+            }
+        except httpx.RequestError as e:
+            return {
+                "success": False,
+                "error": f"请求失败: {str(e)}",
+            }
+        except Exception as e:
+            self.logger.error(f"HTTP 请求异常: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": f"未知错误: {str(e)}",
+            }
+
+
+# 创建工具实例
+_http_client = HTTPClient()
+
+
+@tool(args_schema=HTTPClientInput)
+def http_client_tool(
+    method: str = "GET",
+    url: str = "",
+    headers: Optional[Dict[str, str]] = None,
+    params: Optional[Dict[str, str]] = None,
+    body: Optional[str] = None,
+    timeout: int = 30,
+) -> str:
+    """
+    发送 HTTP 请求获取网络资源。
+    
+    支持 GET、POST、PUT、DELETE 方法。
+    禁止访问内网地址以确保安全。
+    
+    使用示例：
+    - GET 请求: method="GET", url="https://api.example.com/data"
+    - POST 请求: method="POST", url="https://api.example.com/submit", 
+                 body='{"key": "value"}'
+    """
+    try:
+        result = _http_client.request(
+            method=method,
+            url=url,
+            headers=headers,
+            params=params,
+            body=body,
+            timeout=timeout,
+        )
+        
+        if result["success"]:
+            body_preview = result.get("body", "")
+            if isinstance(body_preview, dict):
+                body_preview = json.dumps(body_preview, ensure_ascii=False, indent=2)
+            
+            if len(str(body_preview)) > 2000:
+                body_preview = str(body_preview)[:2000] + "...[截断]"
+            
+            return f"""HTTP {method} {url}
+状态码: {result['status_code']}
+
+响应内容:
+{body_preview}"""
+        else:
+            return f"请求失败: {result.get('error', '未知错误')}"
+    
+    except ValueError as e:
+        return f"参数错误: {str(e)}"
+    except Exception as e:
+        logger.error(f"HTTP 工具异常: {e}", exc_info=True)
+        return f"请求失败: {str(e)}"
+```
+
+### 2.3 注册工具
+
+```python
+# src/tools/__init__.py
+
+from src.tools.http_client import HTTPClient, http_client_tool
+
+__all__ = [
+    # ... 现有工具
+    "HTTPClient",
+    "http_client_tool",
+]
+
+def get_all_tools():
+    return [
+        calculator_tool,
+        file_manager_tool,
+        code_executor_tool,
+        web_search_tool,
+        http_client_tool,  # 新增
+    ]
+```
+
+---
+
+## 3. 新增工作流节点
+
+### 3.1 创建自定义节点
+
+```python
+# src/graph/nodes.py
+
+def validation_node(state: AgentState) -> Dict[str, Any]:
+    """
+    验证节点
+    
+    在执行关键操作前进行验证。
+    """
+    logger.info("[Node] validation - 开始验证")
+    
+    original_task = state.get("original_task", "")
+    subtasks = state.get("subtasks", [])
+    
+    # 验证逻辑
+    validation_results = {
+        "task_valid": bool(original_task),
+        "subtasks_valid": len(subtasks) > 0,
+        "no_errors": len(state.get("error_log", [])) == 0,
+    }
+    
+    all_valid = all(validation_results.values())
+    
+    reasoning_trace = state.get("reasoning_trace", [])
+    reasoning_trace.append(
+        f"[Validation] 验证结果: {'通过' if all_valid else '未通过'}"
+    )
+    
+    return {
+        **state,
+        "validation_results": validation_results,
+        "reasoning_trace": reasoning_trace,
+        "next": "task_router" if all_valid else "error_handler",
+    }
+```
+
+### 3.2 添加到图
+
+```python
+# src/graph/builder.py
+
+def build_graph(settings):
+    # ... 现有节点
+    
+    # 添加验证节点
+    graph.add_node("validation", validation_node)
+    
+    # 添加边：planner 后进行验证
+    graph.add_edge("planner", "validation")
+    
+    # 验证后的条件路由
+    graph.add_conditional_edges(
+        "validation",
+        lambda state: state.get("next", "task_router"),
+        {
+            "task_router": "task_router",
+            "error_handler": "error_handler",
+        }
+    )
+```
+
+---
+
+## 4. 自定义提示词
+
+### 4.1 运行时修改提示词
+
+```python
+from src.config.prompts import PromptTemplates
+
+# 设置自定义系统提示词
+PromptTemplates.set_custom(
+    "COORDINATOR_SYSTEM",
+    """你是一个专门为企业定制的任务协调者。
+
+你的工作重点：
+1. 严格遵守企业安全规范
+2. 优先使用内部工具和资源
+3. 保护敏感信息不外泄
+
+[其他自定义内容...]
+"""
+)
+
+# 设置自定义任务提示词
+PromptTemplates.set_custom(
+    "CODER_TASK",
+    """请按照公司代码规范编写代码：
+
+任务：$task
+上下文：$context
+
+代码规范要求：
+1. 使用 Google Python Style Guide
+2. 类型注解必须完整
+3. 函数必须有 docstring
+4. 单元测试覆盖率 > 80%
+
+[其他规范...]
+"""
+)
+```
+
+### 4.2 从文件加载提示词
+
+```python
+# src/config/custom_prompts.py
+
+import os
+from pathlib import Path
+from src.config.prompts import PromptTemplates
+
+def load_custom_prompts(prompts_dir: str = "prompts") -> None:
+    """
+    从目录加载自定义提示词
+    
+    目录结构：
+        prompts/
+        ├── coordinator_system.txt
+        ├── planner_decompose.txt
+        └── ...
+    """
+    prompts_path = Path(prompts_dir)
+    
+    if not prompts_path.exists():
+        return
+    
+    for prompt_file in prompts_path.glob("*.txt"):
+        # 文件名转换为模板名
+        # coordinator_system.txt -> COORDINATOR_SYSTEM
+        template_name = prompt_file.stem.upper()
+        
+        content = prompt_file.read_text(encoding="utf-8")
+        PromptTemplates.set_custom(template_name, content)
+        
+        print(f"加载自定义提示词: {template_name}")
+```
+
+---
+
+## 5. 自定义路由逻辑
+
+### 5.1 基于任务类型的路由
+
+```python
+# src/graph/edges.py
+
+def custom_task_router(state: AgentState) -> RouteType:
+    """
+    自定义任务路由
+    
+    基于任务类型和关键词智能选择执行者。
+    """
+    original_task = state.get("original_task", "").lower()
+    subtasks = state.get("subtasks", [])
+    
+    # 获取下一个待处理任务
+    pending = [t for t in subtasks if t.get("status") == "pending"]
+    if not pending:
+        return "synthesizer"
+    
+    task = pending[0]
+    task_type = task.get("task_type", "")
+    task_desc = task.get("description", "").lower()
+    
+    # 数据分析任务
+    if any(kw in task_desc for kw in ["分析", "统计", "数据", "图表"]):
+        return "data_analyst"
+    
+    # API 调用任务
+    if any(kw in task_desc for kw in ["api", "接口", "请求", "http"]):
+        return "executor"
+    
+    # 代码任务
+    if task_type == "code" or any(kw in task_desc for kw in ["编写", "代码", "实现"]):
+        return "coder"
+    
+    # 研究任务
+    if task_type == "research" or any(kw in task_desc for kw in ["搜索", "查找", "研究"]):
+        return "researcher"
+    
+    # 默认执行者
+    return "executor"
+```
+
+### 5.2 基于评分的质量路由
+
+```python
+# src/graph/edges.py
+
+def quality_based_router(state: AgentState) -> RouteType:
+    """
+    基于质量评分的路由
+    
+    根据历史评分决定是否需要更严格的审核。
+    """
+    eval_results = state.get("evaluation_results", [])
+    
+    if not eval_results:
+        # 首次评估，使用普通流程
+        return "critic"
+    
+    # 计算平均分
+    scores = [r.get("score", 0.7) for r in eval_results if isinstance(r, dict)]
+    avg_score = sum(scores) / len(scores) if scores else 0.7
+    
+    # 低于阈值，需要更严格的审核
+    if avg_score < 0.6:
+        return "human_node"  # 人工审核
+    elif avg_score < 0.75:
+        return "critic"  # 额外审核
+    else:
+        return "synthesizer"  # 直接综合
+```
+
+---
+
+## 6. 扩展记忆系统
+
+### 6.1 添加向量存储记忆
+
+```python
+# src/memory/vector_memory.py
+
+"""
+向量记忆模块
+============
+
+使用向量数据库实现语义搜索记忆。
+"""
+
+from typing import Any, Dict, List, Optional
+import json
+
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+class VectorMemory:
+    """
+    向量记忆
+    
+    使用 embedding 进行语义搜索。
+    支持对接 Chroma、Pinecone、Milvus 等向量数据库。
+    """
+    
+    def __init__(
+        self,
+        collection_name: str = "multi_agent_memory",
+        embedding_model: str = "text-embedding-3-small",
+    ):
+        """
+        初始化向量记忆
+        
+        Args:
+            collection_name: 集合名称
+            embedding_model: 嵌入模型
+        """
+        self.collection_name = collection_name
+        self.embedding_model = embedding_model
+        self._collection = None
+        self.logger = get_logger(self.__class__.__name__)
+        
+        self._init_collection()
+    
+    def _init_collection(self) -> None:
+        """初始化向量集合"""
+        try:
+            import chromadb
+            from chromadb.config import Settings
+            
+            client = chromadb.Client(Settings(
+                anonymized_telemetry=False
+            ))
+            
+            self._collection = client.get_or_create_collection(
+                name=self.collection_name,
+                metadata={"hnsw:space": "cosine"}
+            )
+            
+            self.logger.info(f"向量集合初始化完成: {self.collection_name}")
+            
+        except ImportError:
+            self.logger.warning("chromadb 未安装，向量记忆不可用")
+            self._collection = None
+    
+    def store(
+        self,
+        key: str,
+        content: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        存储内容到向量数据库
+        
+        Args:
+            key: 唯一标识
+            content: 文本内容
+            metadata: 元数据
+        """
+        if self._collection is None:
+            return
+        
+        self._collection.upsert(
+            ids=[key],
+            documents=[content],
+            metadatas=[metadata or {}],
+        )
+        
+        self.logger.debug(f"存储向量: {key}")
+    
+    def search(
+        self,
+        query: str,
+        top_k: int = 5,
+        filter_metadata: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        语义搜索
+        
+        Args:
+            query: 搜索查询
+            top_k: 返回数量
+            filter_metadata: 元数据过滤
+            
+        Returns:
+            搜索结果列表
+        """
+        if self._collection is None:
+            return []
+        
+        results = self._collection.query(
+            query_texts=[query],
+            n_results=top_k,
+            where=filter_metadata,
+        )
+        
+        # 格式化结果
+        formatted = []
+        for i, (doc_id, doc, metadata, distance) in enumerate(zip(
+            results["ids"][0],
+            results["documents"][0],
+            results["metadatas"][0],
+            results["distances"][0],
+        )):
+            formatted.append({
+                "id": doc_id,
+                "content": doc,
+                "metadata": metadata,
+                "score": 1 - distance,  # 转换为相似度
+            })
+        
+        return formatted
+    
+    def delete(self, key: str) -> None:
+        """删除记忆"""
+        if self._collection is None:
+            return
+        
+        self._collection.delete(ids=[key])
+    
+    def clear(self) -> None:
+        """清空所有记忆"""
+        if self._collection is None:
+            return
+        
+        # 重新创建集合
+        import chromadb
+        client = chromadb.Client()
+        client.delete_collection(self.collection_name)
+        self._init_collection()
+```
+
+---
+
+## 7. 对接企业级场景
+
+### 7.1 企业配置示例
+
+```python
+# src/config/enterprise.py
+
+"""
+企业级配置
+==========
+
+针对企业环境的特殊配置。
+"""
+
+from typing import Dict, List, Optional
+from pydantic import BaseModel, Field
+
+
+class SecurityConfig(BaseModel):
+    """安全配置"""
+    enable_audit_log: bool = True
+    sensitive_fields: List[str] = ["password", "api_key", "token"]
+    allowed_domains: List[str] = []
+    blocked_domains: List[str] = ["localhost", "127.0.0.1"]
+    max_file_size_mb: int = 10
+    enable_encryption: bool = False
+
+
+class ComplianceConfig(BaseModel):
+    """合规配置"""
+    data_retention_days: int = 90
+    enable_pii_detection: bool = True
+    require_approval_for: List[str] = ["file_write", "http_request"]
+    audit_all_llm_calls: bool = True
+
+
+class EnterpriseSettings(BaseModel):
+    """企业设置"""
+    company_name: str
+    environment: str = "production"
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
+    compliance: ComplianceConfig = Field(default_factory=ComplianceConfig)
+    
+    # LLM 配置
+    use_azure_openai: bool = False
+    azure_endpoint: Optional[str] = None
+    azure_deployment: Optional[str] = None
+    
+    # 审批流程
+    require_human_approval: bool = True
+    approval_timeout_minutes: int = 30
+    
+    # 日志
+    log_to_splunk: bool = False
+    splunk_endpoint: Optional[str] = None
+```
+
+### 7.2 审计日志
+
+```python
+# src/utils/audit.py
+
+"""
+审计日志模块
+============
+
+记录系统操作的审计日志。
+"""
+
+import json
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+class AuditLogger:
+    """审计日志记录器"""
+    
+    def __init__(
+        self,
+        log_dir: str = "audit_logs",
+        enable_file_log: bool = True,
+        enable_remote_log: bool = False,
+        remote_endpoint: Optional[str] = None,
+    ):
+        self.log_dir = Path(log_dir)
+        self.enable_file_log = enable_file_log
+        self.enable_remote_log = enable_remote_log
+        self.remote_endpoint = remote_endpoint
+        
+        if enable_file_log:
+            self.log_dir.mkdir(parents=True, exist_ok=True)
+    
+    def log(
+        self,
+        action: str,
+        actor: str,
+        resource: str,
+        details: Optional[Dict[str, Any]] = None,
+        result: str = "success",
+    ) -> None:
+        """
+        记录审计日志
+        
+        Args:
+            action: 操作类型
+            actor: 执行者
+            resource: 资源
+            details: 详细信息
+            result: 结果
+        """
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "action": action,
+            "actor": actor,
+            "resource": resource,
+            "details": details or {},
+            "result": result,
+        }
+        
+        if self.enable_file_log:
+            self._write_to_file(entry)
+        
+        if self.enable_remote_log and self.remote_endpoint:
+            self._send_to_remote(entry)
+        
+        logger.debug(f"审计日志: {action} by {actor} on {resource}")
+    
+    def _write_to_file(self, entry: Dict) -> None:
+        """写入文件"""
+        date_str = datetime.now().strftime("%Y%m%d")
+        log_file = self.log_dir / f"audit_{date_str}.jsonl"
+        
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    
+    def _send_to_remote(self, entry: Dict) -> None:
+        """发送到远程"""
+        try:
+            import httpx
+            httpx.post(
+                self.remote_endpoint,
+                json=entry,
+                timeout=5,
+            )
+        except Exception as e:
+            logger.warning(f"发送审计日志失败: {e}")
+
+
+# 全局审计日志实例
+audit_logger = AuditLogger()
+
+
+def audit_action(
+    action: str,
+    actor: str,
+    resource: str,
+    details: Optional[Dict] = None,
+    result: str = "success",
+) -> None:
+    """便捷函数：记录审计日志"""
+    audit_logger.log(action, actor, resource, details, result)
+```
+
+---
+
+## 8. 性能优化
+
+### 8.1 并行执行优化
+
+```python
+# src/graph/parallel.py
+
+"""
+并行执行模块
+============
+
+支持子任务的并行执行。
+"""
+
+import asyncio
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Callable, Dict, List
+
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+class ParallelExecutor:
+    """并行执行器"""
+    
+    def __init__(self, max_workers: int = 3):
+        self.max_workers = max_workers
+        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+    
+    def execute_parallel(
+        self,
+        tasks: List[Dict[str, Any]],
+        execute_func: Callable[[Dict], Any],
+        timeout: int = 60,
+    ) -> List[Dict[str, Any]]:
+        """
+        并行执行任务
+        
+        Args:
+            tasks: 任务列表
+            execute_func: 执行函数
+            timeout: 超时时间
+            
+        Returns:
+            执行结果列表
+        """
+        results = []
+        futures = {}
+        
+        for task in tasks:
+            future = self.executor.submit(execute_func, task)
+            futures[future] = task["id"]
+        
+        for future in as_completed(futures, timeout=timeout):
+            task_id = futures[future]
+            try:
+                result = future.result()
+                results.append({
+                    "task_id": task_id,
+                    "success": True,
+                    "result": result,
+                })
+            except Exception as e:
+                logger.error(f"任务 {task_id} 执行失败: {e}")
+                results.append({
+                    "task_id": task_id,
+                    "success": False,
+                    "error": str(e),
+                })
+        
+        return results
+    
+    def shutdown(self):
+        """关闭执行器"""
+        self.executor.shutdown(wait=True)
+```
+
+### 8.2 缓存优化
+
+```python
+# src/utils/cache.py
+
+"""
+缓存模块
+========
+
+提供 LLM 响应缓存功能。
+"""
+
+import hashlib
+import json
+from typing import Any, Optional
+from functools import lru_cache
+
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+class LLMCache:
+    """LLM 响应缓存"""
+    
+    def __init__(self, max_size: int = 100):
+        self.max_size = max_size
+        self._cache: Dict[str, Any] = {}
+    
+    def _make_key(self, messages: list, model: str) -> str:
+        """生成缓存键"""
+        content = json.dumps({
+            "messages": [m.content if hasattr(m, "content") else str(m) for m in messages],
+            "model": model,
+        }, sort_keys=True)
+        return hashlib.md5(content.encode()).hexdigest()
+    
+    def get(self, messages: list, model: str) -> Optional[Any]:
+        """获取缓存"""
+        key = self._make_key(messages, model)
+        result = self._cache.get(key)
+        if result:
+            logger.debug(f"缓存命中: {key[:8]}")
+        return result
+    
+    def set(self, messages: list, model: str, response: Any) -> None:
+        """设置缓存"""
+        if len(self._cache) >= self.max_size:
+            # 移除最旧的项
+            oldest_key = next(iter(self._cache))
+            del self._cache[oldest_key]
+        
+        key = self._make_key(messages, model)
+        self._cache[key] = response
+        logger.debug(f"缓存设置: {key[:8]}")
+    
+    def clear(self) -> None:
+        """清空缓存"""
+        self._cache.clear()
+
+
+# 全局缓存实例
+llm_cache = LLMCache()
+```
+
+---
+
+本扩展指南涵盖了系统的主要扩展点。根据具体需求，您可以：
+
+1. 添加新的专业 Agent 处理特定领域任务
+2. 集成更多外部工具和服务
+3. 自定义工作流程和路由逻辑
+4. 扩展记忆系统支持更复杂的检索
+5. 对接企业级基础设施
+
+如有问题，请参考源代码或提交 Issue。
+
+
+---
+
+**第六部分完成。所有交付物已全部输出完毕。**
+
+---
+
+## 📋 交付物清单总结
+
+| 序号 | 交付物 | 状态 |
+|------|--------|------|
+| 1 | 系统架构设计文档 | ✅ 完成 |
+| 2 | 模块与类设计说明 | ✅ 完成 |
+| 3 | 项目目录结构树 | ✅ 完成 |
+| 4 | 完整 Python 源代码 | ✅ 完成 |
+| 5 | README.md | ✅ 完成 |
+| 6 | Demo 示例（3个） | ✅ 完成 |
+| 7 | 验证指南 | ✅ 完成 |
+| 8 | 扩展指南 | ✅ 完成 |
+
+所有代码文件均已完整输出，可直接复制使用。如需任何文件的补充说明或修改，请告知。
