@@ -72,56 +72,58 @@ class Settings(BaseSettings):
     # ===== LLM 配置 =====
     llm_provider: Literal["openai", "anthropic", "local"] = Field(
         default="openai",
-        alias="LLM_PROVIDER"
+        env="LLM_PROVIDER"
     )
     
     # OpenAI
-    openai_api_key: Optional[str] = Field(default=None, alias="OPENAI_API_KEY")
-    openai_model: str = Field(default="gpt-4o-mini", alias="OPENAI_MODEL")
-    openai_base_url: Optional[str] = Field(default=None, alias="OPENAI_BASE_URL")
+    openai_api_key: Optional[str] = Field(default=None, env="OPENAI_API_KEY")
+    openai_model: str = Field(default="gpt-4o-mini", env="OPENAI_MODEL")
+    openai_base_url: Optional[str] = Field(default=None, env="OPENAI_BASE_URL")
+
     
+
     # Anthropic
-    anthropic_api_key: Optional[str] = Field(default=None, alias="ANTHROPIC_API_KEY")
-    anthropic_model: str = Field(default="claude-3-sonnet-20240229", alias="ANTHROPIC_MODEL")
+    anthropic_api_key: Optional[str] = Field(default=None, env="ANTHROPIC_API_KEY")
+    anthropic_model: str = Field(default="claude-3-sonnet-20240229", env="ANTHROPIC_MODEL")
     
     # Local
     local_model_url: str = Field(
         default="http://localhost:11434/v1",
-        alias="LOCAL_MODEL_URL"
+        env="LOCAL_MODEL_URL"
     )
-    local_model_name: str = Field(default="llama3", alias="LOCAL_MODEL_NAME")
+    local_model_name: str = Field(default="llama3", env="LOCAL_MODEL_NAME")
     
     # LLM 通用参数
-    llm_temperature: float = Field(default=0.7, alias="LLM_TEMPERATURE")
-    llm_max_tokens: int = Field(default=4096, alias="LLM_MAX_TOKENS")
+    llm_temperature: float = Field(default=0.7, env="LLM_TEMPERATURE")
+    llm_max_tokens: int = Field(default=4096, env="LLM_MAX_TOKENS")
     
     # ===== 系统配置 =====
-    debug_mode: bool = Field(default=False, alias="DEBUG_MODE")
-    max_iterations: int = Field(default=10, alias="MAX_ITERATIONS")
-    max_task_retries: int = Field(default=3, alias="MAX_TASK_RETRIES")
-    global_timeout: int = Field(default=300, alias="GLOBAL_TIMEOUT")
+    debug_mode: bool = Field(default=False, env="DEBUG_MODE")
+    max_iterations: int = Field(default=10, env="MAX_ITERATIONS")
+    max_task_retries: int = Field(default=3, env="MAX_TASK_RETRIES")
+    global_timeout: int = Field(default=300, env="GLOBAL_TIMEOUT")
     
     # ===== 人工介入 =====
-    enable_human_in_loop: bool = Field(default=True, alias="ENABLE_HUMAN_IN_LOOP")
-    human_review_threshold: float = Field(default=0.6, alias="HUMAN_REVIEW_THRESHOLD")
+    enable_human_in_loop: bool = Field(default=True, env="ENABLE_HUMAN_IN_LOOP")
+    human_review_threshold: float = Field(default=0.6, env="HUMAN_REVIEW_THRESHOLD")
     
     # ===== 并行执行 =====
-    enable_parallel_execution: bool = Field(default=True, alias="ENABLE_PARALLEL_EXECUTION")
-    max_parallel_tasks: int = Field(default=3, alias="MAX_PARALLEL_TASKS")
+    enable_parallel_execution: bool = Field(default=True, env="ENABLE_PARALLEL_EXECUTION")
+    max_parallel_tasks: int = Field(default=3, env="MAX_PARALLEL_TASKS")
     
     # ===== 目录配置 =====
-    workspace_dir: str = Field(default="workspace", alias="WORKSPACE_DIR")
-    log_dir: str = Field(default="logs", alias="LOG_DIR")
+    workspace_dir: str = Field(default="workspace", env="WORKSPACE_DIR")
+    log_dir: str = Field(default="logs", env="LOG_DIR")
     
     # ===== 记忆系统 =====
-    enable_long_term_memory: bool = Field(default=False, alias="ENABLE_LONG_TERM_MEMORY")
-    memory_storage_path: str = Field(default="data/memory", alias="MEMORY_STORAGE_PATH")
+    enable_long_term_memory: bool = Field(default=False, env="ENABLE_LONG_TERM_MEMORY")
+    memory_storage_path: str = Field(default="data/memory", env="MEMORY_STORAGE_PATH")
     
     # ===== 可视化 =====
-    enable_visualization: bool = Field(default=True, alias="ENABLE_VISUALIZATION")
+    enable_visualization: bool = Field(default=True, env="ENABLE_VISUALIZATION")
     visualization_format: Literal["mermaid", "png"] = Field(
         default="mermaid",
-        alias="VISUALIZATION_FORMAT"
+        env="VISUALIZATION_FORMAT"
     )
     
     # ===== Agent 配置 =====
@@ -226,6 +228,9 @@ class Settings(BaseSettings):
         """获取指定 Agent 的配置"""
         return self.agents.get(agent_name)
 
+
+# 你可以用下面命令在本机快速查看加载结果：
+# python -c 'from src.config.settings import reload_settings; s=reload_settings(); print("API_KEY=", s.openai_api_key, "BASE_URL=", s.openai_base_url, "PROVIDER=", s.llm_provider)'
 
 @lru_cache()
 def get_settings() -> Settings:
