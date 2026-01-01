@@ -187,6 +187,7 @@ def build_graph(settings: Optional[Settings] = None) -> StateGraph:
                 "critic": "critic",
                 "error_handler": "error_handler",
                 "synthesizer": "synthesizer",
+                "coordinator": "coordinator",
             }
         )
     
