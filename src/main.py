@@ -201,7 +201,7 @@ def parse_args() -> argparse.Namespace:
   # 带输出文件
   python -m src.main --task "分析数据" --output result.json
   
-  python -m src.main --task "写一本关于 AI Agent 原理与开发实战的技术书" --max-iterations 100 --output result.json
+  python -m src.main --task "写《AI Agent 原理与开发实战》这本技术书的完整内容，全书 10 章，30 万字。要讲清楚、讲透彻基于 LLM 的 Multi-Agent 系统的原理、架构、开发流程，同时提供实际项目案例。" --max-iterations 100 --output result2.json
   
   # 调试模式
   python -m src.main --debug
