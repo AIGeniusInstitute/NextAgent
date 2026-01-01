@@ -201,6 +201,8 @@ def parse_args() -> argparse.Namespace:
   # 带输出文件
   python -m src.main --task "分析数据" --output result.json
   
+  python -m src.main --task "写一本关于 AI Agent 原理与开发实战的技术书" --output result.json
+  
   # 调试模式
   python -m src.main --debug
         """
