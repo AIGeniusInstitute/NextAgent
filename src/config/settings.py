@@ -4,7 +4,7 @@
 
 使用 Pydantic 进行配置验证，支持环境变量和配置文件。
 """
-
+from dotenv import load_dotenv
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -13,6 +13,7 @@ from typing import Dict, List, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+load_dotenv()
 
 class LLMConfig(BaseModel):
     """LLM 配置模型"""
@@ -80,8 +81,6 @@ class Settings(BaseSettings):
     openai_model: str = Field(default="gpt-4o-mini", env="OPENAI_MODEL")
     openai_base_url: Optional[str] = Field(default=None, env="OPENAI_BASE_URL")
 
-    
-
     # Anthropic
     anthropic_api_key: Optional[str] = Field(default=None, env="ANTHROPIC_API_KEY")
     anthropic_model: str = Field(default="claude-3-sonnet-20240229", env="ANTHROPIC_MODEL")
@@ -136,7 +135,10 @@ class Settings(BaseSettings):
         super().__init__(**kwargs)
         self._ensure_directories()
         self._init_default_agents()
-    
+        self.openai_api_key = os.environ.get("OPENAI_API_KEY")
+        self.openai_base_url = os.environ.get("OPENAI_BASE_URL")
+        self.openai_model = os.environ.get("OPENAI_MODEL")
+
     def _ensure_directories(self) -> None:
         """确保必要的目录存在"""
         for dir_path in [self.workspace_dir, self.log_dir]:
@@ -189,33 +191,47 @@ class Settings(BaseSettings):
         for name, config in default_agents.items():
             if name not in self.agents:
                 self.agents[name] = config
-    
+
+
+
     def get_llm_config(self) -> LLMConfig:
+        llm_provider = os.environ.get("LLM_PROVIDER")
+
+        temperature = float(os.environ.get("LLM_TEMPERATURE"))
+        max_tokens = int(os.environ.get("LLM_MAX_TOKENS"))
+
+
         """获取当前 LLM 配置"""
-        if self.llm_provider == "openai":
+        if llm_provider == "openai":
+
+            api_key = os.environ.get("OPENAI_API_KEY")
+            base_url = os.environ.get("OPENAI_BASE_URL")
+            model_name = os.environ.get("OPENAI_MODEL")
+
             return LLMConfig(
-                provider="openai",
-                model_name=self.openai_model,
-                temperature=self.llm_temperature,
-                max_tokens=self.llm_max_tokens,
-                api_key=self.openai_api_key,
-                base_url=self.openai_base_url,
+                provider=llm_provider,
+                model_name=model_name,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                api_key=api_key,
+                base_url=base_url,
             )
-        elif self.llm_provider == "anthropic":
+
+        elif llm_provider == "anthropic":
             return LLMConfig(
-                provider="anthropic",
-                model_name=self.anthropic_model,
-                temperature=self.llm_temperature,
-                max_tokens=self.llm_max_tokens,
-                api_key=self.anthropic_api_key,
+                provider=llm_provider,
+                model_name=os.environ.get("ANTHROPIC_MODEL_NAME", self.anthropic_model),
+                temperature=float(os.environ.get("LLM_TEMPERATURE", self.llm_temperature)),
+                max_tokens=int(os.environ.get("LLM_MAX_TOKENS", self.llm_max_tokens)),
+                api_key=os.environ.get("ANTHROPIC_API_KEY", self.anthropic_api_key),
             )
         else:  # local
             return LLMConfig(
-                provider="local",
-                model_name=self.local_model_name,
-                temperature=self.llm_temperature,
-                max_tokens=self.llm_max_tokens,
-                base_url=self.local_model_url,
+                provider=llm_provider,
+                model_name=os.environ.get("LOCAL_MODEL_NAME", self.local_model_name),
+                temperature=float(os.environ.get("LLM_TEMPERATURE", self.llm_temperature)),
+                max_tokens=int(os.environ.get("LLM_MAX_TOKENS", self.llm_max_tokens)),
+                base_url=os.environ.get("LOCAL_MODEL_URL", self.local_model_url),
             )
     
     def is_agent_enabled(self, agent_name: str) -> bool:
@@ -240,7 +256,9 @@ def get_settings() -> Settings:
     Returns:
         Settings: 配置实例
     """
-    return Settings()
+    settings = Settings()
+
+    return settings
 
 
 def reload_settings() -> Settings:
