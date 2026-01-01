@@ -233,6 +233,21 @@ cd multi-agent-system
 uv pip install -r requirements.txt
 ```
 
+#### 方式四：使用 conda 环境
+
+```bash
+# 克隆项目
+git clone https://github.com/your-repo/multi-agent-system.git
+cd multi-agent-system
+
+# 创建 conda 环境
+conda create -n nextagent python=3.10
+conda activate nextagent
+
+# 安装依赖
+pip install -r requirements.txt
+```
+
 ### 配置环境变量
 
 ```bash

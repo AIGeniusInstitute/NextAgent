@@ -1,0 +1,104 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "multi-agent-system"
+version = "1.0.0"
+description = "通用多智能体协作问题求解系统 - 基于 LangGraph"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [{name = "Multi-Agent System Team", email = "team@example.com"}]
+keywords = ["langgraph", "multi-agent", "llm", "ai", "automation"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+  "langgraph>=0.2.0",
+  "langchain>=0.2.0",
+  "langchain-openai>=0.1.0",
+  "langchain-anthropic>=0.1.0",
+  "langchain-community>=0.2.0",
+  "langchain-core>=0.2.0",
+  "pydantic>=2.0.0",
+  "pydantic-settings>=2.0.0",
+  "python-dotenv>=1.0.0",
+  "rich>=13.0.0",
+  "httpx>=0.25.0",
+  "tenacity>=8.2.0",
+  "tiktoken>=0.5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4.0",
+  "pytest-asyncio>=0.21.0",
+  "pytest-cov>=4.1.0",
+  "black>=23.0.0",
+  "isort>=5.12.0",
+  "mypy>=1.5.0",
+  "ruff>=0.1.0",
+]
+
+[project.scripts]
+multi-agent = "src.main:main"
+
+[project.urls]
+Homepage = "https://github.com/example/multi-agent-system"
+Documentation = "https://github.com/example/multi-agent-system#readme"
+Repository = "https://github.com/example/multi-agent-system"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.black]
+line-length = 100
+target-version = ['py310', 'py311']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+    | \.hatch
+    | \.mypy_cache
+    | \.tox
+    | \.venv
+    | _build
+    | buck-out
+    | build
+    | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+known_first_party = ["src"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --cov=src --cov-report=term-missing"
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4"]
+ignore = ["E501"]
+target-version = "py310"
