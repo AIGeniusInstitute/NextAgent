@@ -1,8 +1,10 @@
 """
 类型定义模块
 ============
+
 集中定义系统中使用的所有类型，确保类型安全和一致性。
 """
+
 from typing import (
     TypedDict,
     Annotated,
@@ -20,7 +22,13 @@ from datetime import datetime
 from enum import Enum
 from pydantic import BaseModel, Field
 
+
+# ============================================
+# 枚举类型定义
+# ============================================
+
 class TaskStatus(str, Enum):
+    """任务状态枚举"""
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -28,20 +36,26 @@ class TaskStatus(str, Enum):
     BLOCKED = "blocked"
     SKIPPED = "skipped"
 
+
 class TaskPriority(str, Enum):
+    """任务优先级枚举"""
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
     CRITICAL = "critical"
 
+
 class TaskType(str, Enum):
+    """任务类型枚举"""
     RESEARCH = "research"
     CODE = "code"
     EXECUTE = "execute"
     ANALYZE = "analyze"
     SYNTHESIZE = "synthesize"
 
+
 class AgentRole(str, Enum):
+    """Agent 角色枚举"""
     COORDINATOR = "coordinator"
     PLANNER = "planner"
     RESEARCHER = "researcher"
@@ -49,6 +63,11 @@ class AgentRole(str, Enum):
     EXECUTOR = "executor"
     CRITIC = "critic"
     SYNTHESIZER = "synthesizer"
+
+
+# ============================================
+# 路由类型定义
+# ============================================
 
 RouteType = Literal[
     "input_parser",
@@ -65,7 +84,13 @@ RouteType = Literal[
     "end",
 ]
 
+
+# ============================================
+# Pydantic 数据模型
+# ============================================
+
 class SubTask(BaseModel):
+    """子任务模型"""
     id: str = Field(description="唯一标识")
     name: str = Field(description="任务名称")
     description: str = Field(description="任务描述")
@@ -80,10 +105,13 @@ class SubTask(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now, description="创建时间")
     updated_at: Optional[datetime] = Field(default=None, description="更新时间")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="元数据")
+
     class Config:
         use_enum_values = True
 
+
 class ToolCallLog(BaseModel):
+    """工具调用日志模型"""
     tool_name: str = Field(description="工具名称")
     input_params: Dict[str, Any] = Field(description="输入参数")
     output: Any = Field(description="输出结果")
@@ -91,10 +119,13 @@ class ToolCallLog(BaseModel):
     error_message: Optional[str] = Field(default=None, description="错误信息")
     timestamp: datetime = Field(default_factory=datetime.now, description="调用时间")
     duration_ms: float = Field(description="执行耗时(毫秒)")
+
     class Config:
         arbitrary_types_allowed = True
 
+
 class AgentOutput(BaseModel):
+    """Agent 输出模型"""
     agent_name: str = Field(description="Agent 名称")
     task_id: Optional[str] = Field(default=None, description="任务ID")
     output: str = Field(description="输出内容")
@@ -102,29 +133,39 @@ class AgentOutput(BaseModel):
     tool_calls: List[ToolCallLog] = Field(default_factory=list, description="工具调用记录")
     confidence: float = Field(default=0.8, ge=0, le=1, description="置信度")
     timestamp: datetime = Field(default_factory=datetime.now, description="时间戳")
+
     class Config:
         arbitrary_types_allowed = True
 
+
 class EvaluationResult(BaseModel):
+    """评估结果模型"""
     score: float = Field(ge=0, le=1, description="评分")
     passed: bool = Field(description="是否通过")
     issues: List[str] = Field(default_factory=list, description="发现的问题")
     suggestions: List[str] = Field(default_factory=list, description="改进建议")
     reasoning: str = Field(default="", description="评估推理过程")
 
+
 class ExecutionMetrics(BaseModel):
+    """执行指标模型"""
     total_duration_seconds: float = Field(default=0.0, description="总执行时间")
     token_usage: Dict[str, int] = Field(
         default_factory=lambda: {"prompt": 0, "completion": 0, "total": 0},
         description="Token 使用统计"
     )
-    agent_durations: Dict[str, float] = Field(default_factory=dict, description="各 Agent 执行时间")
+    agent_durations: Dict[str, float] = Field(
+        default_factory=dict,
+        description="各 Agent 执行时间"
+    )
     iteration_count: int = Field(default=0, description="迭代次数")
     retry_count: int = Field(default=0, description="重试次数")
     tool_call_count: int = Field(default=0, description="工具调用次数")
     success: bool = Field(default=False, description="是否成功")
 
+
 class FinalResult(BaseModel):
+    """最终结果模型"""
     task_id: str = Field(description="任务ID")
     original_task: str = Field(description="原始任务")
     answer: str = Field(description="最终答案")
@@ -132,24 +173,58 @@ class FinalResult(BaseModel):
     agent_outputs: Dict[str, Any] = Field(default_factory=dict, description="各Agent输出")
     metrics: ExecutionMetrics = Field(default_factory=ExecutionMetrics, description="执行指标")
     created_at: datetime = Field(default_factory=datetime.now, description="创建时间")
+
     class Config:
         arbitrary_types_allowed = True
 
+
+# ============================================
+# 协议定义（用于类型检查）
+# ============================================
+
 class AgentProtocol(Protocol):
+    """Agent 协议定义"""
+    
     @property
-    def name(self) -> str: ...
-    def invoke(self, state: Dict[str, Any]) -> Dict[str, Any]: ...
+    def name(self) -> str:
+        """Agent 名称"""
+        ...
+    
+    def invoke(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """执行 Agent 逻辑"""
+        ...
+
 
 class ToolProtocol(Protocol):
+    """工具协议定义"""
+    
     @property
-    def name(self) -> str: ...
+    def name(self) -> str:
+        """工具名称"""
+        ...
+    
     @property
-    def description(self) -> str: ...
-    def invoke(self, **kwargs: Any) -> Any: ...
+    def description(self) -> str:
+        """工具描述"""
+        ...
+    
+    def invoke(self, **kwargs: Any) -> Any:
+        """执行工具"""
+        ...
 
+
+# ============================================
+# 类型别名
+# ============================================
+
+# 节点处理函数类型
 NodeHandler = Callable[[Dict[str, Any]], Dict[str, Any]]
+
+# 路由函数类型
 RouterFunction = Callable[[Dict[str, Any]], RouteType]
+
+# Agent 能力映射类型
 AgentCapabilities = Dict[AgentRole, List[TaskType]]
+
+# 泛型类型变量
 T = TypeVar("T")
-
-

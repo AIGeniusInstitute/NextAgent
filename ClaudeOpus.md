@@ -10939,7 +10939,7 @@ class TestToolIntegration:
 
 ### 6.1 扩展指南完整文档
 
-#### 文件：`docs/EXTENSION_GUIDE.md`
+#### 文件：`EXTENSION_GUIDE.md`
 
 ```markdown
 # Multi-Agent System 扩展指南
