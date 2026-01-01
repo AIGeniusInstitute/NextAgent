@@ -8,6 +8,8 @@
 """
 
 from typing import Literal
+
+from src.config import settings
 from src.graph.state import AgentState
 from src.utils.logger import get_logger
 
@@ -43,8 +45,12 @@ def route_from_coordinator(state: AgentState) -> RouteType:
         下一个节点名称
     """
     next_node = state.get("next", "planner")
+    iteration_count = state.get("iteration_count", 0)
+    max_iterations = state.get("max_iterations", 100)
+    if iteration_count >= max_iterations:
+        logger.debug("[Route] coordinator -> synthesizer (达到最大迭代)")
+        return "synthesizer"
     
-    # 如果有最终答案，直接结束
     if state.get("final_answer"):
         logger.debug("[Route] coordinator -> end (有最终答案)")
         return "end"
@@ -169,8 +175,12 @@ def route_from_critic(state: AgentState) -> RouteType:
         下一个节点名称
     """
     next_node = state.get("next", "task_router")
+    iteration_count = state.get("iteration_count", 0)
+    max_iterations = state.get("max_iterations", 10)
+    if iteration_count >= max_iterations:
+        logger.debug("[Route] critic -> synthesizer (达到最大迭代)")
+        return "synthesizer"
     
-    # 检查是否需要人工介入
     if state.get("needs_human_input"):
         logger.debug("[Route] critic -> human_node")
         return "human_node"

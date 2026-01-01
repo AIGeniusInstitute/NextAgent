@@ -290,6 +290,7 @@ def critic_node(state: AgentState) -> Dict[str, Any]:
     agent = _get_agent(CriticAgent)
     result = agent.invoke(dict(state))
     
+    result["iteration_count"] = state.get("iteration_count", 0) + 1
     return result
 
 

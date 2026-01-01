@@ -329,8 +329,9 @@ class MultiAgentSystem:
         run_config = config or {}
         if self.checkpointer and "configurable" not in run_config:
             run_config["configurable"] = {"thread_id": task_id or "default"}
+        if "recursion_limit" not in run_config:
+            run_config["recursion_limit"] = self.settings.max_iterations
         
-        # 运行图
         try:
             final_state = self.graph.invoke(initial_state, config=run_config)
             
@@ -380,8 +381,9 @@ class MultiAgentSystem:
         run_config = config or {}
         if self.checkpointer and "configurable" not in run_config:
             run_config["configurable"] = {"thread_id": task_id or "default"}
+        if "recursion_limit" not in run_config:
+            run_config["recursion_limit"] = self.settings.graph_recursion_limit
         
-        # 流式执行
         for event in self.graph.stream(initial_state, config=run_config):
             yield event
     
