@@ -70,12 +70,15 @@ class ExecutorAgent(BaseAgent):
         # 汇总执行结果
         summary = self._summarize_results(execution_results, task_description)
         
+        llm_result = self._llm_execution_reasoning(task_description, summary, state)
+        final_output = f"{summary}\n\n## LLM 执行推理\n\n{llm_result}"
+        
         # 判断是否成功
         success = all(r.get("success", False) for r in execution_results)
         
         # 创建 Agent 输出
         agent_output = self.create_output(
-            output=summary,
+            output=final_output,
             reasoning=f"执行任务: {current_task.get('name', '')}",
             task_id=current_task.get("id"),
             confidence=0.9 if success else 0.5,
@@ -87,7 +90,7 @@ class ExecutorAgent(BaseAgent):
             state,
             current_task["id"],
             status=status,
-            result=summary,
+            result=final_output,
             error=None if success else "执行过程中出现错误",
         )
         
@@ -269,4 +272,23 @@ class ExecutorAgent(BaseAgent):
             summary_parts.append("")
         
         return "\n".join(summary_parts)
+    
+    def _llm_execution_reasoning(
+        self,
+        task_description: str,
+        tool_summary: str,
+        state: Dict[str, Any],
+    ) -> str:
+        """
+        使用 LLM 进行执行推理，基于任务描述和工具执行结果生成结果
+        """
+        prompt = PromptTemplates.get(
+            "EXECUTOR_TASK",
+            task=task_description,
+            input_data=tool_summary,
+            expected_output=state.get("expected_output", ""),
+        )
+        messages = [HumanMessage(content=prompt)]
+        response = self.call_llm(messages)
+        return getattr(response, "content", "")
 
