@@ -5,6 +5,17 @@
 集中定义系统中使用的所有类型，确保类型安全和一致性。
 """
 
+# typing 模块导入：
+# - TypedDict: 用于定义具有固定键的字典类型（静态类型检查），适合表达结构化的 dict，而非使用 BaseModel
+# - Annotated: 为类型添加额外的元数据（如校验、约束或文档用途），不改变原类型，仅附加说明
+# - List/Dict: 常用泛型容器类型，分别表示列表与字典，带元素类型参数（如 List[str], Dict[str, Any]）
+# - Any: 放宽类型到任意值，适合无法静态确定具体类型的场景
+# - Optional: 表示可为某类型或 None 的联合类型，等价于 Union[Type, None]
+# - Literal: 将值限制为若干字面量之一，用于更严格的枚举约束（如 Literal['low','high']）
+# - Union: 多种类型的联合类型（如 Union[str, int]），用于表示变量可能有不同的类型分支
+# - Callable: 可调用类型签名（函数/方法），可指定参数与返回类型（如 Callable[[Dict[str, Any]], str]）
+# - TypeVar: 泛型类型变量，定义可重用的类型参数（如 T）以构建泛型函数或类
+# - Protocol: 结构化子类型检查的协议基类，按“鸭子类型”定义接口，无需继承即可被视为实现
 from typing import (
     TypedDict,
     Annotated,
@@ -18,6 +29,7 @@ from typing import (
     TypeVar,
     Protocol,
 )
+
 from datetime import datetime
 from enum import Enum
 from pydantic import BaseModel, Field
